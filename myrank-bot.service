@@ -1,0 +1,27 @@
+[Unit]
+Description=MyRank Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=myrankbot
+Group=myrankbot
+WorkingDirectory=/opt/myrank-discord-bot
+EnvironmentFile=/opt/myrank-discord-bot/.env
+ExecStart=/opt/myrank-discord-bot/.venv/bin/python bot.py
+Restart=always
+RestartSec=5
+
+# O bot nao expoe porta e nao precisa de entrada no Caddy.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/myrank-discord-bot
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
