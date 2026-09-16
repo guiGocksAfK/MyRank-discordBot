@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import discord
 
-from myrank.models import UserProfile
+from myrank.models import UserProfile, Work
 
 ACCENT = discord.Color(0xD4AF37)
 DANGER = discord.Color(0xB3261E)
@@ -29,6 +29,27 @@ def profile(user: UserProfile) -> discord.Embed:
     )
     if user.avatar_url:
         embed.set_thumbnail(url=user.avatar_url)
+    return embed
+
+
+def ranking(
+    works: list[Work], start_index: int, page: int, total_pages: int, category_name: str | None
+) -> discord.Embed:
+    """Uma pagina do ranking. `start_index` e a posicao (0-based) do primeiro item
+    da pagina na lista completa -- so para numerar, a ordem em si e do backend."""
+    title = f"Ranking - {category_name}" if category_name else "Ranking geral"
+    embed = base(title)
+    if not works:
+        embed.description = "Nenhuma obra avaliada ainda."
+        return embed
+
+    for offset, work in enumerate(works, start=1):
+        value = f"Nota final: {work.final_score:.1f}"
+        if work.time_minutes:
+            value += f" | {work.time_minutes} min"
+        embed.add_field(name=f"#{start_index + offset}. {work.title}", value=value, inline=False)
+
+    embed.set_footer(text=f"Pagina {page}/{total_pages}")
     return embed
 
 
