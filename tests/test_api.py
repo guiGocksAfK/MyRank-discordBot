@@ -114,3 +114,36 @@ async def test_repr_nao_vaza_a_api_key(make_client: ClientFactory) -> None:
     assert SETTINGS.bot_api_key not in repr(client)
     assert SETTINGS.bot_api_key not in repr(SETTINGS)
     assert SETTINGS.discord_token not in repr(SETTINGS)
+
+
+async def test_external_search_uses_backend_external_id(make_client: ClientFactory) -> None:
+    payload = [{
+        "externalId": "1396",
+        "title": "Breaking Bad",
+        "posterUrl": "https://example.com/poster.jpg",
+        "releaseDate": "2008-01-20",
+    }]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/external/search/tv"
+        assert request.url.params["query"] == "Breaking Bad"
+        return json_response(payload)
+
+    client = await make_client(handler)
+    results = await client.external_search(123, "tv", "Breaking Bad")
+    assert len(results) == 1
+    assert results[0].external_id == "1396"
+    assert results[0].title == "Breaking Bad"
+    assert results[0].year == "2008"
+
+
+async def test_external_details_without_id(make_client: ClientFactory) -> None:
+    payload = {
+        "title": "Breaking Bad", "imageUrl": "https://example.com/poster.jpg",
+        "creator": "Vince Gilligan", "releaseDate": "2008-01-20", "timeMinutes": 3000,
+    }
+    client = await make_client(lambda _: json_response(payload))
+    details = await client.external_details(123, "tv", "1396")
+    assert details.title == "Breaking Bad"
+    assert details.time_minutes == 3000
+    assert details.creator == "Vince Gilligan"
