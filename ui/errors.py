@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import functools
 import logging
-from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from collections.abc import Callable, Coroutine
+from typing import Any, Concatenate, ParamSpec, TypeVar
 
 import discord
 
@@ -27,6 +27,7 @@ from ui import embeds
 
 log = logging.getLogger(__name__)
 
+P = ParamSpec("P")
 T = TypeVar("T")
 
 UNEXPECTED_MESSAGE = "Algo quebrou aqui do meu lado. Tente de novo em instantes."
@@ -46,18 +47,28 @@ def to_embed(exc: Exception) -> discord.Embed:
     return embeds.error(UNEXPECTED_MESSAGE)
 
 
-def guarded(
-    *, ephemeral: bool = False
-) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+Callback = Callable[Concatenate[Any, discord.Interaction, P], Coroutine[Any, Any, T]]
+
+
+def guarded(*, ephemeral: bool = False) -> Callable[[Callback[P, T]], Callback[P, T | None]]:
     """Envolve um callback de slash command com defer + tratamento de erro.
 
     `ephemeral` vale para a resposta de sucesso; erro e *sempre* ephemeral, porque
     os comandos rodam em canal compartilhado e erro costuma carregar dado de conta.
+
+    Tipado com `Concatenate[Any, Interaction, P]` -- e nao `Callable[..., Awaitable[Any]]`
+    -- para casar com `CommandCallback` do discord.py (`self, interaction, *P`). Isso
+    ainda nao fecha 100%: mypy nao resolve o `Union` de assinaturas com/sem `self` que
+    `app_commands.command` aceita, entao o uso em cog continua precisando de
+    `# type: ignore[arg-type]` no ponto de uso -- mas o corpo do decorator agora e
+    tipado de verdade, e comandos fora de Cog (sem `self`) fecham sem ignore nenhum.
     """
 
-    def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+    def decorator(func: Callback[P, T]) -> Callback[P, T | None]:
         @functools.wraps(func)
-        async def wrapper(self: Any, interaction: discord.Interaction, *args: Any, **kwargs: Any):
+        async def wrapper(
+            self: Any, interaction: discord.Interaction, /, *args: P.args, **kwargs: P.kwargs
+        ) -> T | None:
             await interaction.response.defer(ephemeral=ephemeral)
             try:
                 return await func(self, interaction, *args, **kwargs)
