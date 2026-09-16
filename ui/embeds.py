@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import discord
 
-from myrank.models import Badge, ExternalDetails, UserProfile, Work
+from myrank.models import Badge, ExternalDetails, Work
 
 ACCENT = discord.Color(0xD4AF37)
 DANGER = discord.Color(0xB3261E)
@@ -20,34 +20,54 @@ def base(title: str, description: str | None = None) -> discord.Embed:
     return discord.Embed(title=title, description=description, color=ACCENT)
 
 
-def profile(user: UserProfile) -> discord.Embed:
-    embed = base(user.username or "Perfil MyRank")
-    embed.add_field(name="Obras avaliadas", value=str(user.work_count))
+def profile(
+    display_name: str,
+    avatar_url: str | None,
+    work_count: int,
+    average_score: float | None,
+    badges_unlocked: int,
+    badges_total: int,
+) -> discord.Embed:
+    """`/api/users` esta fora do escopo da bot key -- nao ha como pedir username nem
+    avatar ao MyRank, entao quem responde por isso e o proprio Discord (mais
+    atualizado de qualquer forma). `average_score` e media aritmetica calculada
+    aqui em cima de notas que ja sao finais -- exibicao, nao regra de negocio nova."""
+    embed = base(display_name or "Perfil MyRank")
+    embed.add_field(name="Obras avaliadas", value=str(work_count))
     embed.add_field(
         name="Media geral",
-        value=f"{user.average_score:.1f}" if user.average_score is not None else "-",
+        value=f"{average_score:.1f}" if average_score is not None else "-",
     )
-    if user.avatar_url:
-        embed.set_thumbnail(url=user.avatar_url)
+    embed.add_field(name="Conquistas", value=f"{badges_unlocked}/{badges_total}")
+    if avatar_url:
+        embed.set_thumbnail(url=avatar_url)
     return embed
 
 
 def ranking(
     works: list[Work], start_index: int, page: int, total_pages: int, category_name: str | None
 ) -> discord.Embed:
-    """Uma pagina do ranking. `start_index` e a posicao (0-based) do primeiro item
-    da pagina na lista completa -- so para numerar, a ordem em si e do backend."""
+    """Uma pagina do ranking. Filtrado por categoria, usa `work.position` (pronto do
+    backend); em "geral" (todas as categorias juntas) esse campo repete entre
+    categorias diferentes, entao a numeracao cai pra ordem da lista mesmo --
+    `start_index` e a posicao (0-based) do primeiro item da pagina nessa lista."""
     title = f"Ranking - {category_name}" if category_name else "Ranking geral"
     embed = base(title)
     if not works:
         embed.description = "Nenhuma obra avaliada ainda."
         return embed
 
+    use_position = category_name is not None
     for offset, work in enumerate(works, start=1):
+        rank = (
+            work.position
+            if (use_position and work.position is not None)
+            else start_index + offset
+        )
         value = f"Nota final: {work.final_score:.1f}"
         if work.time_minutes:
             value += f" | {work.time_minutes} min"
-        embed.add_field(name=f"#{start_index + offset}. {work.title}", value=value, inline=False)
+        embed.add_field(name=f"#{rank}. {work.title}", value=value, inline=False)
 
     embed.set_footer(text=f"Pagina {page}/{total_pages}")
     return embed
@@ -55,7 +75,8 @@ def ranking(
 
 def badges(items: list[Badge], page: int, total_pages: int) -> discord.Embed:
     """Progresso vem pronto do backend (`Badge.progress_ratio` so evita divisao por
-    zero) -- a barra aqui e so desenho, nao calculo."""
+    zero) -- a barra aqui e so desenho, nao calculo. `has_progress=False` e uma
+    conquista de tudo-ou-nada (sem barra fazendo sentido nenhum)."""
     embed = base("Conquistas")
     if not items:
         embed.description = "Nenhuma conquista ainda."
@@ -63,7 +84,7 @@ def badges(items: list[Badge], page: int, total_pages: int) -> discord.Embed:
 
     for badge in items:
         icon = badge.icon or ("✅" if badge.unlocked else "\U0001f512")
-        if badge.unlocked:
+        if badge.unlocked or not badge.has_progress:
             value = badge.description
         else:
             bar = _progress_bar(badge.progress_ratio)

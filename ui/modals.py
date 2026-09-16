@@ -43,6 +43,12 @@ class _ScoreModal(discord.ui.Modal):
             )
             return
 
+        if not 0.0 <= score <= 10.0:
+            await interaction.response.send_message(
+                "A nota tem que estar entre 0 e 10.", ephemeral=True
+            )
+            return
+
         try:
             work = await self._save(interaction.user.id, score)
         except Exception as exc:
@@ -67,6 +73,10 @@ class ScoreModal(_ScoreModal):
         self._category_id = category_id
 
     async def _save(self, discord_id: int, score: float) -> Work:
+        # Campos aceitos por POST /works: title, score, timeMinutes, categoryId
+        # (obrigatorios) + imageUrl, creator, releaseDate (opcionais). Nao ha
+        # externalId no schema do backend -- so title <= 300, score 0-10, timeMinutes
+        # 0-1000000 sao validados la; a nota ja foi validada aqui em cima.
         payload = {
             "title": self._details.title,
             "score": score,
@@ -75,7 +85,6 @@ class ScoreModal(_ScoreModal):
             "imageUrl": self._details.image_url,
             "creator": self._details.creator,
             "releaseDate": self._details.release_date,
-            "externalId": self._details.external_id,
         }
         return await self._api.create_work(discord_id, payload)
 
