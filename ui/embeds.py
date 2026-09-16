@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import discord
 
-from myrank.models import Badge, UserProfile, Work
+from myrank.models import Badge, ExternalDetails, UserProfile, Work
 
 ACCENT = discord.Color(0xD4AF37)
 DANGER = discord.Color(0xB3261E)
@@ -77,6 +77,30 @@ def badges(items: list[Badge], page: int, total_pages: int) -> discord.Embed:
 def _progress_bar(ratio: float, length: int = 10) -> str:
     filled = round(ratio * length)
     return "▰" * filled + "▱" * (length - filled)
+
+
+def pick_category(details: ExternalDetails) -> discord.Embed:
+    """Aparece so quando `match_category` nao acha uma categoria confiavel --
+    o bot pergunta, nunca inventa nem cria categoria."""
+    embed = base(
+        details.title,
+        "Nao encontrei uma categoria sua com match confiavel. Escolha uma abaixo:",
+    )
+    if details.image_url:
+        embed.set_thumbnail(url=details.image_url)
+    return embed
+
+
+def work_added(work: Work) -> discord.Embed:
+    embed = base(f"Adicionado: {work.title}")
+    embed.add_field(name="Nota final", value=f"{work.final_score:.1f}")
+    if work.category_name:
+        embed.add_field(name="Categoria", value=work.category_name)
+    if work.time_minutes:
+        embed.add_field(name="Duracao", value=f"{work.time_minutes} min")
+    if work.image_url:
+        embed.set_thumbnail(url=work.image_url)
+    return embed
 
 
 def error(message: str) -> discord.Embed:
