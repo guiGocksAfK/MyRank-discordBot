@@ -20,6 +20,7 @@ log = logging.getLogger("myrank.bot")
 COGS: tuple[str, ...] = (
     "cogs.profile",
     "cogs.ranking",
+    "cogs.conquistas",
     "cogs.add",
     "cogs.manage",
 )

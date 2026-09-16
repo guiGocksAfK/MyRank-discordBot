@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import discord
 
-from myrank.models import UserProfile, Work
+from myrank.models import Badge, UserProfile, Work
 
 ACCENT = discord.Color(0xD4AF37)
 DANGER = discord.Color(0xB3261E)
@@ -51,6 +51,32 @@ def ranking(
 
     embed.set_footer(text=f"Pagina {page}/{total_pages}")
     return embed
+
+
+def badges(items: list[Badge], page: int, total_pages: int) -> discord.Embed:
+    """Progresso vem pronto do backend (`Badge.progress_ratio` so evita divisao por
+    zero) -- a barra aqui e so desenho, nao calculo."""
+    embed = base("Conquistas")
+    if not items:
+        embed.description = "Nenhuma conquista ainda."
+        return embed
+
+    for badge in items:
+        icon = badge.icon or ("✅" if badge.unlocked else "\U0001f512")
+        if badge.unlocked:
+            value = badge.description
+        else:
+            bar = _progress_bar(badge.progress_ratio)
+            value = f"{badge.description}\n{bar} {badge.progress}/{badge.target}"
+        embed.add_field(name=f"{icon} {badge.name}", value=value, inline=False)
+
+    embed.set_footer(text=f"Pagina {page}/{total_pages}")
+    return embed
+
+
+def _progress_bar(ratio: float, length: int = 10) -> str:
+    filled = round(ratio * length)
+    return "▰" * filled + "▱" * (length - filled)
 
 
 def error(message: str) -> discord.Embed:
