@@ -320,11 +320,12 @@ class ManageView(discord.ui.View):
         confirm_view.message = await interaction.original_response()
 
     async def _confirm_remove(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
         try:
             await self._api.delete_work(interaction.user.id, self._work.id)
         except Exception as exc:
-            await interaction.response.edit_message(content=None, embed=to_embed(exc), view=None)
+            await interaction.edit_original_response(content=None, embed=to_embed(exc), view=None)
             return
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=None, embed=embeds.work_removed(self._work.title), view=None
         )

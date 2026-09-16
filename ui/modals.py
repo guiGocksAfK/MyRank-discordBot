@@ -49,19 +49,24 @@ class _ScoreModal(discord.ui.Modal):
             )
             return
 
+        # Confirma antes da chamada HTTP para nao expirar a interacao.
+        await interaction.response.defer(thinking=True, ephemeral=True)
         try:
             work = await self._save(interaction.user.id, score)
         except Exception as exc:
-            await interaction.response.send_message(embed=to_embed(exc), ephemeral=True)
+            await interaction.edit_original_response(embed=to_embed(exc))
             return
 
-        await interaction.response.send_message(embed=self._success_embed(work))
+        await interaction.edit_original_response(embed=self._success_embed(work))
 
     async def on_error(  # type: ignore[override]  # Modal.on_error e 2-arg, BaseView.on_error e 3-arg
         self, interaction: discord.Interaction, error: Exception
     ) -> None:
         log.exception("Erro nao tratado em %s", type(self).__name__)
-        await interaction.response.send_message(embed=to_embed(error), ephemeral=True)
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=to_embed(error), ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=to_embed(error), ephemeral=True)
 
 
 class ScoreModal(_ScoreModal):

@@ -117,7 +117,7 @@ class ExternalResult:
     @classmethod
     def from_api(cls, data: Json) -> ExternalResult:
         return cls(
-            external_id=str(data["id"]),
+            external_id=str(data["externalId"]),
             title=str(data.get("title", "")),
             year=_opt_str(data.get("year") or _year_of(data.get("releaseDate"))),
             creator=_opt_str(data.get("creator")),
