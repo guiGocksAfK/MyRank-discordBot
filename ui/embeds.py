@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import discord
 
-from myrank.models import Badge, ExternalDetails, Work
+from myrank.models import Badge, ExternalDetails, ExternalResult, Work
 
 ACCENT = discord.Color(0xD4AF37)
 DANGER = discord.Color(0xB3261E)
@@ -158,3 +158,31 @@ def not_linked() -> discord.Embed:
         ),
         color=ACCENT,
     )
+
+
+def search_result(
+    result: ExternalResult, media_label: str, page: int, total: int
+) -> discord.Embed:
+    embed = base(result.title[:256], "Confira a capa e use Ver detalhes antes de cadastrar.")
+    embed.add_field(name="Tipo", value=media_label)
+    embed.add_field(name="Ano", value=result.year or "Nao informado")
+    if result.poster_url:
+        embed.set_image(url=result.poster_url)
+    else:
+        embed.description = (embed.description or "") + "\nCapa nao disponivel."
+    embed.set_footer(text=f"Resultado {page}/{total} | Use < e > para comparar as obras.")
+    return embed
+
+
+def external_preview(details: ExternalDetails, media_label: str) -> discord.Embed:
+    embed = base(details.title[:256], "E esta a obra? Confirme abaixo para informar sua nota.")
+    embed.add_field(name="Tipo", value=media_label)
+    embed.add_field(name="Lancamento", value=(details.release_date or "Nao informado")[:1024])
+    embed.add_field(name="Criador / autor", value=(details.creator or "Nao informado")[:1024])
+    embed.add_field(
+        name="Duracao total",
+        value=f"{details.time_minutes} min" if details.time_minutes else "Nao informada",
+    )
+    if details.image_url:
+        embed.set_image(url=details.image_url)
+    return embed

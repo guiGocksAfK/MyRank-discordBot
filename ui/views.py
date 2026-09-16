@@ -9,7 +9,6 @@ que so diferem nas opcoes e no callback, entao o componente generico nasce diret
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Awaitable, Callable
 
 import discord
@@ -20,8 +19,6 @@ from myrank.models import Badge, Category, ExternalDetails, ExternalResult, Work
 from ui import embeds
 from ui.errors import to_embed
 from ui.modals import EditScoreModal, ScoreModal
-
-log = logging.getLogger(__name__)
 
 PAGE_SIZE = 10
 
@@ -151,15 +148,8 @@ class ChoiceSelect(discord.ui.Select[discord.ui.View]):
         await self._on_pick(interaction, self.values[0])
 
 
-class MediaResultView(discord.ui.View):
-    """Passo 1 do /add: qual resultado da busca externa e o certo.
-
-    As chamadas de rede aqui (external_details + get_categories) precisam terminar
-    dentro da janela de 3s da interacao -- diferente de um slash command, um select
-    que vai abrir um modal na sequencia nao pode dar `defer` antes, senao o Discord
-    nao aceita mais `send_modal` depois. Por isso nao ha `guarded()` aqui: erro vira
-    edit de embed direto, sem o defer que os comandos fazem.
-    """
+class MediaResultView(PaginatedView):
+    """Uma capa por pagina, na ordem retornada pelo backend."""
 
     def __init__(
         self,
@@ -168,40 +158,88 @@ class MediaResultView(discord.ui.View):
         media_type: MediaType,
         results: list[ExternalResult],
     ) -> None:
-        super().__init__(timeout=120)
+        super().__init__(len(results), author_id, page_size=1)
+        self._api = api
+        self._media_type = media_type
+        self._results = results
+
+    def embed(self) -> discord.Embed:
+        return embeds.search_result(
+            self._results[self._page], self._media_type.label,
+            self.current_page, self.total_pages,
+        )
+
+    @discord.ui.button(label="Ver detalhes", style=discord.ButtonStyle.primary)
+    async def show_details(
+        self, interaction: discord.Interaction, button: discord.ui.Button[MediaResultView]
+    ) -> None:
+        # A abertura do modal fica para um novo clique, depois da consulta HTTP.
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        result = self._results[self._page]
+        try:
+            details = await self._api.external_details(
+                interaction.user.id, self._media_type.endpoint, result.external_id
+            )
+            categories = await self._api.get_categories(interaction.user.id)
+        except Exception as exc:
+            await interaction.edit_original_response(embed=to_embed(exc), view=None)
+            return
+        view = MediaPreviewView(
+            self._api, self._author_id, self._media_type, details, categories
+        )
+        await interaction.edit_original_response(
+            embed=embeds.external_preview(details, self._media_type.label), view=view
+        )
+
+
+class MediaPreviewView(discord.ui.View):
+    """Confirma a obra antes de abrir o modal; nenhuma rede neste clique."""
+
+    def __init__(
+        self, api: MyRankClient, author_id: int, media_type: MediaType,
+        details: ExternalDetails, categories: list[Category],
+    ) -> None:
+        super().__init__(timeout=180)
         self._api = api
         self._author_id = author_id
         self._media_type = media_type
-        options = [
-            discord.SelectOption(
-                label=_truncate(result.title, 100),
-                description=_result_hint(result),
-                value=result.external_id,
-            )
-            for result in results[:25]
-        ]
-        self.add_item(ChoiceSelect(options, "Escolha o resultado certo...", self._on_pick))
+        self._details = details
+        self._categories = categories
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return await _check_author(interaction, self._author_id)
 
-    async def _on_pick(self, interaction: discord.Interaction, external_id: str) -> None:
-        try:
-            details = await self._api.external_details(
-                interaction.user.id, self._media_type.endpoint, external_id
-            )
-            categories = await self._api.get_categories(interaction.user.id)
-        except Exception as exc:
-            await _safe_edit(interaction, to_embed(exc))
-            return
-
-        category = match_category(self._media_type, categories)
+    @discord.ui.button(label="E esta! Dar nota", style=discord.ButtonStyle.success)
+    async def confirm(
+        self, interaction: discord.Interaction, button: discord.ui.Button[MediaPreviewView]
+    ) -> None:
+        category = match_category(self._media_type, self._categories)
         if category is not None:
-            await interaction.response.send_modal(ScoreModal(self._api, details, category.id))
-            return
+            await interaction.response.send_modal(
+                ScoreModal(self._api, self._details, category.id)
+            )
+        elif self._categories:
+            await interaction.response.edit_message(
+                embed=embeds.pick_category(self._details),
+                view=CategoryPickView(
+                    self._api, self._author_id, self._details, self._categories
+                ),
+            )
+        else:
+            await interaction.response.edit_message(
+                embed=embeds.error("Crie uma categoria no MyRank antes de cadastrar a obra."),
+                view=None,
+            )
 
-        view = CategoryPickView(self._api, self._author_id, details, categories)
-        await interaction.response.edit_message(embed=embeds.pick_category(details), view=view)
+    @discord.ui.button(label="Nao e esta", style=discord.ButtonStyle.secondary)
+    async def cancel(
+        self, interaction: discord.Interaction, button: discord.ui.Button[MediaPreviewView]
+    ) -> None:
+        await interaction.response.edit_message(
+            content="Use as setas na mensagem da busca para conferir outro resultado.",
+            embed=None, view=None,
+        )
+        self.stop()
 
 
 class CategoryPickView(discord.ui.View):
@@ -232,20 +270,6 @@ class CategoryPickView(discord.ui.View):
         await interaction.response.send_modal(
             ScoreModal(self._api, self._details, int(category_id))
         )
-
-
-async def _safe_edit(interaction: discord.Interaction, embed: discord.Embed) -> None:
-    """A interacao pode ja ter expirado (mais de 3s de chamada de rede) -- silencio
-    e pior que so logar, mas estourar aqui tambem nao ajuda ninguem."""
-    try:
-        await interaction.response.edit_message(embed=embed, view=None)
-    except discord.HTTPException:
-        log.warning("Nao foi possivel editar a mensagem do /add -- interacao provavelmente expirou")
-
-
-def _result_hint(result: ExternalResult) -> str | None:
-    parts = [part for part in (result.creator, result.year) if part]
-    return " - ".join(parts) if parts else None
 
 
 class ConfirmView(discord.ui.View):
