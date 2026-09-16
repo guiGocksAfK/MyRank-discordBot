@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 import httpx
 import pytest
@@ -17,10 +17,11 @@ SETTINGS = Settings(
 )
 
 Handler = Callable[[httpx.Request], httpx.Response]
+ClientFactory = Callable[[Handler], Awaitable[MyRankClient]]
 
 
 @pytest.fixture
-async def make_client() -> AsyncIterator[Callable[[Handler], MyRankClient]]:
+async def make_client() -> AsyncIterator[ClientFactory]:
     """Fabrica de MyRankClient com MockTransport -- sem rede e sem Discord.
 
     So e possivel porque `myrank/` nao importa discord.py: o client recebe um
@@ -34,7 +35,7 @@ async def make_client() -> AsyncIterator[Callable[[Handler], MyRankClient]]:
         created.append(client)
         return client
 
-    yield factory  # type: ignore[misc]
+    yield factory
 
     for client in created:
         await client.aclose()
