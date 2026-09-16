@@ -41,9 +41,11 @@ class ApiError(MyRankError):
 
 
 class ApiUnavailableError(MyRankError):
-    """Backend fora do ar, com timeout ou respondendo 5xx.
+    """Backend fora do ar (timeout, 5xx) ou problema de configuracao do bot
+    (bot key invalida, header ausente, rota fora do escopo permitido -- 401/403 que
+    nao sao "conta sem vinculo").
 
     Separado de `ApiError` porque a acao do usuario e diferente: nao ha nada a
-    corrigir na entrada dele, so tentar de novo. Cobre o criterio de o bot
-    sobreviver a um restart do backend.
+    corrigir na entrada dele, so tentar de novo (ou esperar o bot ser consertado).
+    Cobre o criterio de o bot sobreviver a um restart do backend.
     """

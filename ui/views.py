@@ -1,18 +1,42 @@
-"""Paginacao por botoes.
+"""Componentes interativos: paginacao por botoes e os selects do /add.
 
 `PaginatedView` nasceu generica ja no segundo consumidor (`/ranking` e `/conquistas`
 precisavam do mesmo botao anterior/proximo, so o conteudo da pagina muda) -- e o
-ponto em que valia extrair; antes disso, com um unico uso, seria enfeite.
+ponto em que valia extrair; antes disso, com um unico uso, seria enfeite. `ChoiceSelect`
+segue a mesma regra: o /add tem dois selects (resultado externo, depois categoria)
+que so diferem nas opcoes e no callback, entao o componente generico nasce direto.
 """
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Awaitable, Callable
+
 import discord
 
-from myrank.models import Badge, Work
+from myrank.api import MyRankClient
+from myrank.media import MediaType, match_category
+from myrank.models import Badge, Category, ExternalDetails, ExternalResult, Work
 from ui import embeds
+from ui.errors import to_embed
+from ui.modals import EditScoreModal, ScoreModal
+
+log = logging.getLogger(__name__)
 
 PAGE_SIZE = 10
+
+
+async def _check_author(interaction: discord.Interaction, author_id: int) -> bool:
+    if interaction.user.id != author_id:
+        await interaction.response.send_message(
+            "Isso nao e seu -- rode o comando de novo.", ephemeral=True
+        )
+        return False
+    return True
+
+
+def _truncate(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 class PaginatedView(discord.ui.View):
@@ -52,12 +76,7 @@ class PaginatedView(discord.ui.View):
         raise NotImplementedError
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self._author_id:
-            await interaction.response.send_message(
-                "Isso nao e seu -- rode o comando de novo.", ephemeral=True
-            )
-            return False
-        return True
+        return await _check_author(interaction, self._author_id)
 
     async def on_timeout(self) -> None:
         for child in self.children:
@@ -112,3 +131,200 @@ class BadgesView(PaginatedView):
 
     def embed(self) -> discord.Embed:
         return embeds.badges(self._badges[self.page_slice], self.current_page, self.total_pages)
+
+
+class ChoiceSelect(discord.ui.Select[discord.ui.View]):
+    """Select generico: opcoes prontas, callback injetado. Usado pelo resultado da
+    busca externa e pela escolha de categoria do /add -- so isso, nao ganha um uso
+    a mais que justifique mais generalidade que essa."""
+
+    def __init__(
+        self,
+        options: list[discord.SelectOption],
+        placeholder: str,
+        on_pick: Callable[[discord.Interaction, str], Awaitable[None]],
+    ) -> None:
+        super().__init__(placeholder=placeholder, options=options)
+        self._on_pick = on_pick
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await self._on_pick(interaction, self.values[0])
+
+
+class MediaResultView(discord.ui.View):
+    """Passo 1 do /add: qual resultado da busca externa e o certo.
+
+    As chamadas de rede aqui (external_details + get_categories) precisam terminar
+    dentro da janela de 3s da interacao -- diferente de um slash command, um select
+    que vai abrir um modal na sequencia nao pode dar `defer` antes, senao o Discord
+    nao aceita mais `send_modal` depois. Por isso nao ha `guarded()` aqui: erro vira
+    edit de embed direto, sem o defer que os comandos fazem.
+    """
+
+    def __init__(
+        self,
+        api: MyRankClient,
+        author_id: int,
+        media_type: MediaType,
+        results: list[ExternalResult],
+    ) -> None:
+        super().__init__(timeout=120)
+        self._api = api
+        self._author_id = author_id
+        self._media_type = media_type
+        options = [
+            discord.SelectOption(
+                label=_truncate(result.title, 100),
+                description=_result_hint(result),
+                value=result.external_id,
+            )
+            for result in results[:25]
+        ]
+        self.add_item(ChoiceSelect(options, "Escolha o resultado certo...", self._on_pick))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await _check_author(interaction, self._author_id)
+
+    async def _on_pick(self, interaction: discord.Interaction, external_id: str) -> None:
+        try:
+            details = await self._api.external_details(
+                interaction.user.id, self._media_type.endpoint, external_id
+            )
+            categories = await self._api.get_categories(interaction.user.id)
+        except Exception as exc:
+            await _safe_edit(interaction, to_embed(exc))
+            return
+
+        category = match_category(self._media_type, categories)
+        if category is not None:
+            await interaction.response.send_modal(ScoreModal(self._api, details, category.id))
+            return
+
+        view = CategoryPickView(self._api, self._author_id, details, categories)
+        await interaction.response.edit_message(embed=embeds.pick_category(details), view=view)
+
+
+class CategoryPickView(discord.ui.View):
+    """Passo 2 do /add, so aparece quando `match_category` nao acha um match
+    confiavel -- o bot nunca escolhe nem cria categoria sozinho."""
+
+    def __init__(
+        self,
+        api: MyRankClient,
+        author_id: int,
+        details: ExternalDetails,
+        categories: list[Category],
+    ) -> None:
+        super().__init__(timeout=120)
+        self._api = api
+        self._author_id = author_id
+        self._details = details
+        options = [
+            discord.SelectOption(label=_truncate(category.name, 100), value=str(category.id))
+            for category in categories[:25]
+        ]
+        self.add_item(ChoiceSelect(options, "Escolha a categoria...", self._on_pick))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await _check_author(interaction, self._author_id)
+
+    async def _on_pick(self, interaction: discord.Interaction, category_id: str) -> None:
+        await interaction.response.send_modal(
+            ScoreModal(self._api, self._details, int(category_id))
+        )
+
+
+async def _safe_edit(interaction: discord.Interaction, embed: discord.Embed) -> None:
+    """A interacao pode ja ter expirado (mais de 3s de chamada de rede) -- silencio
+    e pior que so logar, mas estourar aqui tambem nao ajuda ninguem."""
+    try:
+        await interaction.response.edit_message(embed=embed, view=None)
+    except discord.HTTPException:
+        log.warning("Nao foi possivel editar a mensagem do /add -- interacao provavelmente expirou")
+
+
+def _result_hint(result: ExternalResult) -> str | None:
+    parts = [part for part in (result.creator, result.year) if part]
+    return " - ".join(parts) if parts else None
+
+
+class ConfirmView(discord.ui.View):
+    """Confirmar/cancelar generico com timeout. Primeiro uso e o /remover dentro do
+    /manage, mas nao ha nada de remocao aqui dentro -- quem decide o que "confirmar"
+    faz e o callback injetado."""
+
+    message: discord.Message | None = None
+
+    def __init__(
+        self,
+        author_id: int,
+        on_confirm: Callable[[discord.Interaction], Awaitable[None]],
+        *,
+        timeout: float = 30,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self._author_id = author_id
+        self._on_confirm = on_confirm
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await _check_author(interaction, self._author_id)
+
+    async def on_timeout(self) -> None:
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+        if self.message is not None:
+            await self.message.edit(content="Tempo esgotado -- nada foi alterado.", view=self)
+
+    @discord.ui.button(label="Confirmar", style=discord.ButtonStyle.danger)
+    async def confirm(
+        self, interaction: discord.Interaction, button: discord.ui.Button[ConfirmView]
+    ) -> None:
+        await self._on_confirm(interaction)
+
+    @discord.ui.button(label="Cancelar", style=discord.ButtonStyle.secondary)
+    async def cancel(
+        self, interaction: discord.Interaction, button: discord.ui.Button[ConfirmView]
+    ) -> None:
+        await interaction.response.edit_message(content="Cancelado.", embed=None, view=None)
+
+
+class ManageView(discord.ui.View):
+    """Editar a nota ou remover uma obra especifica -- alvo do /manage."""
+
+    def __init__(self, api: MyRankClient, author_id: int, work: Work) -> None:
+        super().__init__(timeout=120)
+        self._api = api
+        self._author_id = author_id
+        self._work = work
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await _check_author(interaction, self._author_id)
+
+    @discord.ui.button(label="Editar nota", style=discord.ButtonStyle.primary)
+    async def edit_score(
+        self, interaction: discord.Interaction, button: discord.ui.Button[ManageView]
+    ) -> None:
+        await interaction.response.send_modal(EditScoreModal(self._api, self._work))
+
+    @discord.ui.button(label="Remover", style=discord.ButtonStyle.danger)
+    async def remove(
+        self, interaction: discord.Interaction, button: discord.ui.Button[ManageView]
+    ) -> None:
+        confirm_view = ConfirmView(self._author_id, self._confirm_remove)
+        await interaction.response.edit_message(
+            content=f"Tem certeza que quer remover **{self._work.title}**?",
+            embed=None,
+            view=confirm_view,
+        )
+        confirm_view.message = await interaction.original_response()
+
+    async def _confirm_remove(self, interaction: discord.Interaction) -> None:
+        try:
+            await self._api.delete_work(interaction.user.id, self._work.id)
+        except Exception as exc:
+            await interaction.response.edit_message(content=None, embed=to_embed(exc), view=None)
+            return
+        await interaction.response.edit_message(
+            content=None, embed=embeds.work_removed(self._work.title), view=None
+        )

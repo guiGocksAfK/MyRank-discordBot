@@ -31,7 +31,6 @@ from myrank.models import (
     Category,
     ExternalDetails,
     ExternalResult,
-    UserProfile,
     Work,
 )
 
@@ -81,11 +80,6 @@ class MyRankClient:
 
     def __repr__(self) -> str:
         return f"MyRankClient(api_url={self._settings.api_url!r})"
-
-    # ---------------------------------------------------------------- perfil
-
-    async def get_me(self, discord_id: int) -> UserProfile:
-        return UserProfile.from_api(await self._get(discord_id, "/users/me"))
 
     # ---------------------------------------------------------------- categorias
 
@@ -167,10 +161,28 @@ class MyRankClient:
             return
 
         if status == 401:
-            # A X-Bot-Key e fixa e valida por construcao, entao 401 aqui significa
-            # que o backend nao conhece este Discord ID.
-            log.info("Discord ID sem vinculo em %s %s", method, path)
-            raise NotLinkedError
+            # 401 tem 3 causas: bot key invalida, header ausente (essas duas sao bug
+            # nosso), ou conta do Discord sem vinculo (a unica que e do usuario). O
+            # backend nao diferencia por codigo, so pela mensagem -- entao e nela que
+            # a gente olha. Nunca mostrar "conta nao vinculada" pras duas primeiras,
+            # senao o usuario tenta se vincular pra um problema que nao e dele.
+            message = _error_message(response)
+            if "vincul" in message.casefold():
+                log.info("Discord ID sem vinculo em %s %s", method, path)
+                raise NotLinkedError
+            log.error("401 de configuracao (nao de vinculo) em %s %s: %s", method, path, message)
+            raise ApiUnavailableError(GENERIC_SERVER_MESSAGE)
+
+        if status == 403:
+            # Rota fora do conjunto que aceita a bot key (ou o filtro ainda nao subiu
+            # nesse ambiente) -- nada que o usuario final possa corrigir.
+            log.error(
+                "403 em %s %s (rota fora do escopo da bot key?): %s",
+                method,
+                path,
+                response.text[:300],
+            )
+            raise ApiUnavailableError(GENERIC_SERVER_MESSAGE)
 
         if status == 429:
             raise RateLimitedError(_retry_after(response))

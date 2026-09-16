@@ -21,20 +21,37 @@ async def test_envia_bot_key_e_discord_id_em_toda_chamada(make_client) -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         capturado.update(request.headers)
-        return json_response({"id": 1, "username": "guigo"})
+        return json_response([])
 
     client = await make_client(handler)
-    await client.get_me(123456789)
+    await client.get_categories(123456789)
 
     assert capturado["x-bot-key"] == SETTINGS.bot_api_key
     assert capturado["x-discord-id"] == "123456789"
 
 
-async def test_401_vira_not_linked(make_client) -> None:
-    client = await make_client(lambda _: json_response({"message": "sem vinculo"}, 401))
+async def test_401_de_vinculo_vira_not_linked(make_client) -> None:
+    message = "Esta conta do Discord nao esta vinculada a um usuario do MyRank."
+    client = await make_client(lambda _: json_response({"message": message}, 401))
 
     with pytest.raises(NotLinkedError):
-        await client.get_me(1)
+        await client.get_categories(1)
+
+
+async def test_401_de_configuracao_nao_vira_not_linked(make_client) -> None:
+    """Bot key invalida e header ausente tambem sao 401, mas sao bug/config nosso --
+    nao podem virar a mensagem de "vincule sua conta" pro usuario."""
+    client = await make_client(lambda _: json_response({"message": "Bot key invalida."}, 401))
+
+    with pytest.raises(ApiUnavailableError):
+        await client.get_categories(1)
+
+
+async def test_403_rota_fora_do_escopo_vira_unavailable(make_client) -> None:
+    client = await make_client(lambda _: httpx.Response(403))
+
+    with pytest.raises(ApiUnavailableError):
+        await client.get_categories(1)
 
 
 async def test_429_vira_rate_limited_com_retry_after(make_client) -> None:
@@ -44,7 +61,7 @@ async def test_429_vira_rate_limited_com_retry_after(make_client) -> None:
     client = await make_client(handler)
 
     with pytest.raises(RateLimitedError) as exc:
-        await client.get_me(1)
+        await client.get_categories(1)
     assert exc.value.retry_after == 12.0
 
 
@@ -62,7 +79,7 @@ async def test_500_nao_vaza_detalhe_do_servidor(make_client) -> None:
     )
 
     with pytest.raises(ApiUnavailableError) as exc:
-        await client.get_me(1)
+        await client.get_categories(1)
     assert "NullPointer" not in str(exc.value)
 
 
@@ -73,7 +90,7 @@ async def test_backend_fora_do_ar_falha_limpo(make_client) -> None:
     client = await make_client(handler)
 
     with pytest.raises(ApiUnavailableError):
-        await client.get_me(1)
+        await client.get_categories(1)
 
 
 async def test_lista_aceita_envelope_paginado(make_client) -> None:

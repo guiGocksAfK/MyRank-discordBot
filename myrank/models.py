@@ -4,9 +4,9 @@ Todos sao `frozen`: e aqui que a premissa "o bot nao calcula nada" vira estrutur
 Nao existe setter e nao existe metodo de calculo -- `final_score` so pode ser
 preenchido com o que o backend devolveu.
 
-Os `from_api` sao tolerantes a campo ausente de proposito: os nomes exatos dos
-campos dos DTOs do Java ainda precisam ser conferidos contra a API real, e uma
-chave a mais ou a menos nao deve derrubar um comando.
+Campos conferidos contra a spec real do backend (`MyRank-backend`, filtro de bot).
+`from_api` continua tolerante a campo ausente -- protege contra uma chave a mais ou
+a menos, nao contra nome errado (isso o `KeyError`/teste pega, de proposito).
 """
 
 from __future__ import annotations
@@ -44,6 +44,10 @@ class Work:
     image_url: str | None = None
     creator: str | None = None
     release_date: str | None = None
+    # Posicao dentro da categoria, pronta do backend. So serve pra numerar o /ranking
+    # quando filtrado por categoria -- em /works/unified (todas juntas) ela repete
+    # entre categorias diferentes, entao la a numeracao e por ordem de lista mesmo.
+    position: int | None = None
 
     @classmethod
     def from_api(cls, data: Json) -> Work:
@@ -58,37 +62,24 @@ class Work:
             image_url=_opt_str(data.get("imageUrl")),
             creator=_opt_str(data.get("creator")),
             release_date=_opt_str(data.get("releaseDate")),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class UserProfile:
-    id: int
-    username: str
-    avatar_url: str | None = None
-    work_count: int = 0
-    average_score: float | None = None
-
-    @classmethod
-    def from_api(cls, data: Json) -> UserProfile:
-        return cls(
-            id=int(data["id"]),
-            username=str(data.get("username") or data.get("name") or ""),
-            avatar_url=_opt_str(data.get("avatarUrl")),
-            work_count=int(data.get("workCount") or 0),
-            average_score=_opt_float(data.get("averageScore")),
+            position=_opt_int(data.get("position")),
         )
 
 
 @dataclass(frozen=True, slots=True)
 class Badge:
-    id: int
+    """`code` e o identificador real (nao ha `id` numerico na resposta)."""
+
+    code: str
     name: str
     description: str
     unlocked: bool
+    bucket: str | None = None
+    has_progress: bool = False
     progress: int = 0
     target: int = 0
     icon: str | None = None
+    unlocked_at: str | None = None
 
     @property
     def progress_ratio(self) -> float:
@@ -101,13 +92,16 @@ class Badge:
     @classmethod
     def from_api(cls, data: Json) -> Badge:
         return cls(
-            id=int(data["id"]),
+            code=str(data.get("code", "")),
             name=str(data.get("name", "")),
             description=str(data.get("description", "")),
             unlocked=bool(data.get("unlocked", False)),
+            bucket=_opt_str(data.get("bucket")),
+            has_progress=bool(data.get("hasProgress", False)),
             progress=int(data.get("progress") or 0),
             target=int(data.get("target") or 0),
             icon=_opt_str(data.get("icon")),
+            unlocked_at=_opt_str(data.get("unlockedAt")),
         )
 
 
@@ -163,10 +157,6 @@ def _opt_str(value: Any) -> str | None:
 
 def _opt_int(value: Any) -> int | None:
     return None if value is None else int(value)
-
-
-def _opt_float(value: Any) -> float | None:
-    return None if value is None else float(value)
 
 
 def _year_of(release_date: Any) -> str | None:

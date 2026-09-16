@@ -1,4 +1,10 @@
-"""/perfil -- primeiro comando, teste real da arquitetura em myrank/ e ui/."""
+"""/perfil -- primeiro comando, teste real da arquitetura em myrank/ e ui/.
+
+`/api/users` esta fora do escopo da bot key (so /works, /categories, /badges,
+/external aceitam a X-Bot-Key), entao nao ha `GET /users/me` pra chamar. O perfil sai
+de duas chamadas que ja existem (obras + conquistas) e da identidade que o proprio
+Discord ja tem -- nao precisa perguntar nome nem avatar pro MyRank.
+"""
 
 from __future__ import annotations
 
@@ -19,8 +25,20 @@ class ProfileCog(commands.Cog):
     )
     @guarded()
     async def perfil(self, interaction: discord.Interaction) -> None:
-        user = await self.bot.api.get_me(interaction.user.id)  # type: ignore[attr-defined]
-        await interaction.followup.send(embed=embeds.profile(user))
+        api = self.bot.api  # type: ignore[attr-defined]
+        works = await api.list_works(interaction.user.id)
+        badges = await api.get_badges(interaction.user.id)
+
+        average = sum(work.final_score for work in works) / len(works) if works else None
+        embed = embeds.profile(
+            interaction.user.display_name,
+            interaction.user.display_avatar.url,
+            len(works),
+            average,
+            sum(1 for badge in badges if badge.unlocked),
+            len(badges),
+        )
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot: commands.Bot) -> None:
