@@ -19,7 +19,7 @@ from myrank.media import MediaType, match_category
 from myrank.models import Badge, Category, ExternalDetails, ExternalResult, Work
 from ui import embeds
 from ui.errors import to_embed
-from ui.modals import ScoreModal
+from ui.modals import EditScoreModal, ScoreModal
 
 log = logging.getLogger(__name__)
 
@@ -246,3 +246,85 @@ async def _safe_edit(interaction: discord.Interaction, embed: discord.Embed) -> 
 def _result_hint(result: ExternalResult) -> str | None:
     parts = [part for part in (result.creator, result.year) if part]
     return " - ".join(parts) if parts else None
+
+
+class ConfirmView(discord.ui.View):
+    """Confirmar/cancelar generico com timeout. Primeiro uso e o /remover dentro do
+    /manage, mas nao ha nada de remocao aqui dentro -- quem decide o que "confirmar"
+    faz e o callback injetado."""
+
+    message: discord.Message | None = None
+
+    def __init__(
+        self,
+        author_id: int,
+        on_confirm: Callable[[discord.Interaction], Awaitable[None]],
+        *,
+        timeout: float = 30,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self._author_id = author_id
+        self._on_confirm = on_confirm
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await _check_author(interaction, self._author_id)
+
+    async def on_timeout(self) -> None:
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+        if self.message is not None:
+            await self.message.edit(content="Tempo esgotado -- nada foi alterado.", view=self)
+
+    @discord.ui.button(label="Confirmar", style=discord.ButtonStyle.danger)
+    async def confirm(
+        self, interaction: discord.Interaction, button: discord.ui.Button[ConfirmView]
+    ) -> None:
+        await self._on_confirm(interaction)
+
+    @discord.ui.button(label="Cancelar", style=discord.ButtonStyle.secondary)
+    async def cancel(
+        self, interaction: discord.Interaction, button: discord.ui.Button[ConfirmView]
+    ) -> None:
+        await interaction.response.edit_message(content="Cancelado.", embed=None, view=None)
+
+
+class ManageView(discord.ui.View):
+    """Editar a nota ou remover uma obra especifica -- alvo do /manage."""
+
+    def __init__(self, api: MyRankClient, author_id: int, work: Work) -> None:
+        super().__init__(timeout=120)
+        self._api = api
+        self._author_id = author_id
+        self._work = work
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await _check_author(interaction, self._author_id)
+
+    @discord.ui.button(label="Editar nota", style=discord.ButtonStyle.primary)
+    async def edit_score(
+        self, interaction: discord.Interaction, button: discord.ui.Button[ManageView]
+    ) -> None:
+        await interaction.response.send_modal(EditScoreModal(self._api, self._work))
+
+    @discord.ui.button(label="Remover", style=discord.ButtonStyle.danger)
+    async def remove(
+        self, interaction: discord.Interaction, button: discord.ui.Button[ManageView]
+    ) -> None:
+        confirm_view = ConfirmView(self._author_id, self._confirm_remove)
+        await interaction.response.edit_message(
+            content=f"Tem certeza que quer remover **{self._work.title}**?",
+            embed=None,
+            view=confirm_view,
+        )
+        confirm_view.message = await interaction.original_response()
+
+    async def _confirm_remove(self, interaction: discord.Interaction) -> None:
+        try:
+            await self._api.delete_work(interaction.user.id, self._work.id)
+        except Exception as exc:
+            await interaction.response.edit_message(content=None, embed=to_embed(exc), view=None)
+            return
+        await interaction.response.edit_message(
+            content=None, embed=embeds.work_removed(self._work.title), view=None
+        )

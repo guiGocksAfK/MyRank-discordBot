@@ -91,8 +91,9 @@ def pick_category(details: ExternalDetails) -> discord.Embed:
     return embed
 
 
-def work_added(work: Work) -> discord.Embed:
-    embed = base(f"Adicionado: {work.title}")
+def _work_fields(embed: discord.Embed, work: Work, *, show_raw_score: bool) -> discord.Embed:
+    if show_raw_score:
+        embed.add_field(name="Nota", value=f"{work.score:.1f}")
     embed.add_field(name="Nota final", value=f"{work.final_score:.1f}")
     if work.category_name:
         embed.add_field(name="Categoria", value=work.category_name)
@@ -101,6 +102,24 @@ def work_added(work: Work) -> discord.Embed:
     if work.image_url:
         embed.set_thumbnail(url=work.image_url)
     return embed
+
+
+def work_added(work: Work) -> discord.Embed:
+    return _work_fields(base(f"Adicionado: {work.title}"), work, show_raw_score=False)
+
+
+def work_updated(work: Work) -> discord.Embed:
+    """`/manage` mostra a nota crua (o que o usuario digitou), nao so a final --
+    e o unico ponto onde a diferenca entre as duas importa pra quem esta editando."""
+    return _work_fields(base(f"Atualizado: {work.title}"), work, show_raw_score=True)
+
+
+def work_detail(work: Work) -> discord.Embed:
+    return _work_fields(base(work.title), work, show_raw_score=True)
+
+
+def work_removed(title: str) -> discord.Embed:
+    return base(f"Removido: {title}")
 
 
 def error(message: str) -> discord.Embed:
