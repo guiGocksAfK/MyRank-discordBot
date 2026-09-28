@@ -91,3 +91,8 @@ journalctl -u myrank-bot -f
 Requer as alterações da branch `discord-bot` do
 [MyRank-backend](https://github.com/guiGocksAfK/MyRank-backend): coluna `discord_id`
 (migration V11), `BotAuthenticationFilter` e rate limit por usuário.
+
+## License
+
+© 2026 Guilherme Gocks. All rights reserved.
+This source code is shared for portfolio purposes only and may not be copied, modified or redistributed without permission.
