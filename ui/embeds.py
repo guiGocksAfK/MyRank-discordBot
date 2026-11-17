@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import discord
 
-from myrank.models import Badge, ExternalDetails, ExternalResult, Work
+from myrank.media import MediaType, template_label
+from myrank.models import Badge, Category, ExternalDetails, ExternalResult, Work
 
 ACCENT = discord.Color(0xD4AF37)
 DANGER = discord.Color(0xB3261E)
@@ -100,16 +101,31 @@ def _progress_bar(ratio: float, length: int = 10) -> str:
     return "▰" * filled + "▱" * (length - filled)
 
 
-def pick_category(details: ExternalDetails) -> discord.Embed:
-    """Aparece so quando `match_category` nao acha uma categoria confiavel --
-    o bot pergunta, nunca inventa nem cria categoria."""
-    embed = base(
-        details.title,
-        "Nao encontrei uma categoria sua com match confiavel. Escolha uma abaixo:",
-    )
+def pick_table(details: ExternalDetails) -> discord.Embed:
+    """Aparece quando mais de uma tabela aceita esse tipo -- o bot pergunta."""
+    embed = base(details.title, "Em qual tabela essa obra entra?")
     if details.image_url:
         embed.set_thumbnail(url=details.image_url)
     return embed
+
+
+def pick_subcategory(title: str, image_url: str | None, table: Category) -> discord.Embed:
+    embed = base(title[:256], f"Quer colocar numa subcategoria de **{table.name}**?")
+    if image_url:
+        embed.set_thumbnail(url=image_url)
+    return embed
+
+
+def pick_template(table: Category) -> discord.Embed:
+    return base(table.name[:256], "Essa tabela aceita mais de um tipo. Qual e o da obra?")
+
+
+def manual_ready(table: Category, template: str) -> discord.Embed:
+    return base(
+        table.name[:256],
+        f"Nova obra do tipo **{template_label(template)}**. "
+        "Clique abaixo para preencher titulo, nota e o resto.",
+    )
 
 
 def _work_fields(embed: discord.Embed, work: Work, *, show_raw_score: bool) -> discord.Embed:
@@ -117,7 +133,10 @@ def _work_fields(embed: discord.Embed, work: Work, *, show_raw_score: bool) -> d
         embed.add_field(name="Nota", value=f"{work.score:.1f}")
     embed.add_field(name="Nota final", value=f"{work.final_score:.1f}")
     if work.category_name:
-        embed.add_field(name="Categoria", value=work.category_name)
+        table = work.category_name
+        if work.subcategory_name:
+            table += f" > {work.subcategory_name}"
+        embed.add_field(name="Tabela", value=table)
     if work.time_minutes:
         embed.add_field(name="Duracao", value=f"{work.time_minutes} min")
     if work.image_url:
@@ -166,6 +185,8 @@ def search_result(
     embed = base(result.title[:256], "Confira a capa e use Ver detalhes antes de cadastrar.")
     embed.add_field(name="Tipo", value=media_label)
     embed.add_field(name="Ano", value=result.year or "Nao informado")
+    if result.creator:
+        embed.add_field(name="De", value=result.creator[:1024])
     if result.poster_url:
         embed.set_image(url=result.poster_url)
     else:
@@ -174,15 +195,32 @@ def search_result(
     return embed
 
 
-def external_preview(details: ExternalDetails, media_label: str) -> discord.Embed:
+# Ficha mostrada na previa, na ordem do card do site. Generos e status ficam de
+# fora: o site tambem nao mostra generos no card, e o status vem cru da API, em ingles.
+_FICHA_LABELS: tuple[tuple[str, str], ...] = (
+    ("seasons", "Temporadas"),
+    ("episodes", "Episodios"),
+    ("volumes", "Volumes"),
+    ("pages", "Paginas"),
+    ("album", "Album"),
+    ("trackCount", "Faixas"),
+)
+
+
+def external_preview(details: ExternalDetails, media: MediaType) -> discord.Embed:
     embed = base(details.title[:256], "E esta a obra? Confirme abaixo para informar sua nota.")
-    embed.add_field(name="Tipo", value=media_label)
+    embed.add_field(name="Tipo", value=media.label)
     embed.add_field(name="Lancamento", value=(details.release_date or "Nao informado")[:1024])
     embed.add_field(name="Criador / autor", value=(details.creator or "Nao informado")[:1024])
-    embed.add_field(
-        name="Duracao total",
-        value=f"{details.time_minutes} min" if details.time_minutes else "Nao informada",
-    )
+    if media.time_weighted:
+        embed.add_field(
+            name="Duracao total",
+            value=f"{details.time_minutes} min" if details.time_minutes else "Nao informada",
+        )
+    for key, label in _FICHA_LABELS:
+        value = details.details.get(key)
+        if value not in (None, "", 0):
+            embed.add_field(name=label, value=str(value)[:1024])
     if details.image_url:
         embed.set_image(url=details.image_url)
     return embed

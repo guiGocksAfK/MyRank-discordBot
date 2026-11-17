@@ -3,8 +3,8 @@
 `PaginatedView` nasceu generica ja no segundo consumidor (`/ranking` e `/conquistas`
 precisavam do mesmo botao anterior/proximo, so o conteudo da pagina muda) -- e o
 ponto em que valia extrair; antes disso, com um unico uso, seria enfeite. `ChoiceSelect`
-segue a mesma regra: o /add tem dois selects (resultado externo, depois categoria)
-que so diferem nas opcoes e no callback, entao o componente generico nasce direto.
+segue a mesma regra: o /add tem dois selects (tabela, depois subcategoria) que so
+diferem nas opcoes e no callback, entao o componente generico nasce direto.
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ from collections.abc import Awaitable, Callable
 import discord
 
 from myrank.api import MyRankClient
-from myrank.media import MediaType, match_category
+from myrank.media import MediaType, tables_for, template_label
 from myrank.models import Badge, Category, ExternalDetails, ExternalResult, Work
 from ui import embeds
 from ui.errors import to_embed
-from ui.modals import EditScoreModal, ScoreModal
+from ui.modals import EditScoreModal, ManualWorkModal, ScoreModal
 
 PAGE_SIZE = 10
 
@@ -131,9 +131,8 @@ class BadgesView(PaginatedView):
 
 
 class ChoiceSelect(discord.ui.Select[discord.ui.View]):
-    """Select generico: opcoes prontas, callback injetado. Usado pelo resultado da
-    busca externa e pela escolha de categoria do /add -- so isso, nao ganha um uso
-    a mais que justifique mais generalidade que essa."""
+    """Select generico: opcoes prontas, callback injetado. Usado na escolha de
+    tabela e de subcategoria do /add."""
 
     def __init__(
         self,
@@ -185,26 +184,30 @@ class MediaResultView(PaginatedView):
             await interaction.edit_original_response(embed=to_embed(exc), view=None)
             return
         view = MediaPreviewView(
-            self._api, self._author_id, self._media_type, details, categories
+            self._api, self._author_id, self._media_type, details,
+            tables_for(self._media_type, categories),
         )
         await interaction.edit_original_response(
-            embed=embeds.external_preview(details, self._media_type.label), view=view
+            embed=embeds.external_preview(details, self._media_type), view=view
         )
 
 
 class MediaPreviewView(discord.ui.View):
-    """Confirma a obra antes de abrir o modal; nenhuma rede neste clique."""
+    """Confirma a obra antes de escolher onde ela entra; nenhuma rede neste clique.
+
+    `tables` ja vem filtrada: so as tabelas que aceitam esse tipo de midia.
+    """
 
     def __init__(
         self, api: MyRankClient, author_id: int, media_type: MediaType,
-        details: ExternalDetails, categories: list[Category],
+        details: ExternalDetails, tables: list[Category],
     ) -> None:
         super().__init__(timeout=180)
         self._api = api
         self._author_id = author_id
         self._media_type = media_type
         self._details = details
-        self._categories = categories
+        self._tables = tables
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return await _check_author(interaction, self._author_id)
@@ -213,22 +216,21 @@ class MediaPreviewView(discord.ui.View):
     async def confirm(
         self, interaction: discord.Interaction, button: discord.ui.Button[MediaPreviewView]
     ) -> None:
-        category = match_category(self._media_type, self._categories)
-        if category is not None:
-            await interaction.response.send_modal(
-                ScoreModal(self._api, self._details, category.id)
-            )
-        elif self._categories:
+        flow = _AddFlow(self._api, self._author_id, self._media_type, self._details)
+        if not self._tables:
             await interaction.response.edit_message(
-                embed=embeds.pick_category(self._details),
-                view=CategoryPickView(
-                    self._api, self._author_id, self._details, self._categories
+                embed=embeds.error(
+                    f"Voce nao tem nenhuma tabela de {self._media_type.label}. "
+                    f"Crie uma no site ({embeds.SITE_URL}) e rode o /add de novo."
                 ),
+                view=None,
             )
+        elif len(self._tables) == 1:
+            await flow.table_chosen(interaction, self._tables[0])
         else:
             await interaction.response.edit_message(
-                embed=embeds.error("Crie uma categoria no MyRank antes de cadastrar a obra."),
-                view=None,
+                embed=embeds.pick_table(self._details),
+                view=TablePickView(flow, self._tables),
             )
 
     @discord.ui.button(label="Nao e esta", style=discord.ButtonStyle.secondary)
@@ -242,34 +244,173 @@ class MediaPreviewView(discord.ui.View):
         self.stop()
 
 
-class CategoryPickView(discord.ui.View):
-    """Passo 2 do /add, so aparece quando `match_category` nao acha um match
-    confiavel -- o bot nunca escolhe nem cria categoria sozinho."""
+class _Flow:
+    """Passos finais de um cadastro: escolher onde a obra entra e abrir o modal.
+
+    `_AddFlow` (obra da busca) e `ManualFlow` (obra digitada) so diferem no modal
+    que abrem no fim; as telas de tabela e subcategoria servem as duas.
+    """
+
+    api: MyRankClient
+    author_id: int
+    title: str
+    image_url: str | None = None
+
+    async def table_chosen(self, interaction: discord.Interaction, table: Category) -> None:
+        if table.subcategories:
+            await interaction.response.edit_message(
+                embed=embeds.pick_subcategory(self.title, self.image_url, table),
+                view=SubcategoryPickView(self, table),
+            )
+        else:
+            await self.ask_score(interaction, table, None)
+
+    async def ask_score(
+        self, interaction: discord.Interaction, table: Category, subcategory_id: int | None
+    ) -> None:
+        raise NotImplementedError
+
+
+class _AddFlow(_Flow):
+    """O que falta decidir no /add depois de confirmar a obra: tabela, subcategoria
+    e nota. Cada passo so aparece quando ha escolha de verdade a fazer."""
 
     def __init__(
-        self,
-        api: MyRankClient,
-        author_id: int,
+        self, api: MyRankClient, author_id: int, media_type: MediaType,
         details: ExternalDetails,
-        categories: list[Category],
     ) -> None:
+        self.api = api
+        self.author_id = author_id
+        self.media_type = media_type
+        self.details = details
+        self.title = details.title
+        self.image_url = details.image_url
+
+    async def ask_score(
+        self, interaction: discord.Interaction, table: Category, subcategory_id: int | None
+    ) -> None:
+        await interaction.response.send_modal(
+            ScoreModal(self.api, self.media_type, self.details, table.id, subcategory_id)
+        )
+
+
+class ManualFlow(_Flow):
+    """/add-manual: a tabela ja veio no comando; falta o tipo (se a tabela for mista),
+    a subcategoria (se houver) e os dados."""
+
+    def __init__(
+        self, api: MyRankClient, author_id: int, table: Category, template: str | None,
+    ) -> None:
+        self.api = api
+        self.author_id = author_id
+        self.table = table
+        self.template = template
+        self.title = table.name
+
+    def first_step(self) -> tuple[discord.Embed, discord.ui.View]:
+        """Primeira mensagem do /add-manual. Ela sempre tem um componente: o modal so
+        pode abrir como resposta a um clique, e o comando ja respondeu com o defer."""
+        if self.template is None:
+            return embeds.pick_template(self.table), TemplatePickView(self)
+        if self.table.subcategories:
+            return (
+                embeds.pick_subcategory(self.title, None, self.table),
+                SubcategoryPickView(self, self.table),
+            )
+        return embeds.manual_ready(self.table, self.template), OpenModalView(self)
+
+    async def template_chosen(self, interaction: discord.Interaction, template: str) -> None:
+        self.template = template
+        await self.table_chosen(interaction, self.table)
+
+    async def ask_score(
+        self, interaction: discord.Interaction, table: Category, subcategory_id: int | None
+    ) -> None:
+        assert self.template is not None
+        await interaction.response.send_modal(
+            ManualWorkModal(self.api, self.template, table.id, subcategory_id)
+        )
+
+
+class TemplatePickView(discord.ui.View):
+    """Tabela mista (ex.: Series + Animes): a obra digitada precisa de um tipo."""
+
+    def __init__(self, flow: ManualFlow) -> None:
         super().__init__(timeout=120)
-        self._api = api
-        self._author_id = author_id
-        self._details = details
+        self._flow = flow
         options = [
-            discord.SelectOption(label=_truncate(category.name, 100), value=str(category.id))
-            for category in categories[:25]
+            discord.SelectOption(label=template_label(t), value=t)
+            for t in flow.table.templates[:25]
         ]
-        self.add_item(ChoiceSelect(options, "Escolha a categoria...", self._on_pick))
+        self.add_item(ChoiceSelect(options, "Que tipo de obra e?", self._on_pick))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _check_author(interaction, self._author_id)
+        return await _check_author(interaction, self._flow.author_id)
 
-    async def _on_pick(self, interaction: discord.Interaction, category_id: str) -> None:
-        await interaction.response.send_modal(
-            ScoreModal(self._api, self._details, int(category_id))
-        )
+    async def _on_pick(self, interaction: discord.Interaction, value: str) -> None:
+        await self._flow.template_chosen(interaction, value)
+
+
+class OpenModalView(discord.ui.View):
+    """Um botao so, para abrir o modal quando nao ha mais nada a escolher antes."""
+
+    def __init__(self, flow: ManualFlow) -> None:
+        super().__init__(timeout=300)
+        self._flow = flow
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await _check_author(interaction, self._flow.author_id)
+
+    @discord.ui.button(label="Preencher dados", style=discord.ButtonStyle.success)
+    async def open_modal(
+        self, interaction: discord.Interaction, button: discord.ui.Button[OpenModalView]
+    ) -> None:
+        await self._flow.ask_score(interaction, self._flow.table, None)
+
+
+class TablePickView(discord.ui.View):
+    """So aparece quando a pessoa tem mais de uma tabela que aceita o tipo."""
+
+    def __init__(self, flow: _Flow, tables: list[Category]) -> None:
+        super().__init__(timeout=120)
+        self._flow = flow
+        self._tables = {str(table.id): table for table in tables[:25]}
+        options = [
+            discord.SelectOption(label=_truncate(table.name, 100), value=key)
+            for key, table in self._tables.items()
+        ]
+        self.add_item(ChoiceSelect(options, "Escolha a tabela...", self._on_pick))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await _check_author(interaction, self._flow.author_id)
+
+    async def _on_pick(self, interaction: discord.Interaction, value: str) -> None:
+        await self._flow.table_chosen(interaction, self._tables[value])
+
+
+NO_SUBCATEGORY = "0"
+
+
+class SubcategoryPickView(discord.ui.View):
+    """Subcategoria e opcional, como no site: a primeira opcao e deixar sem."""
+
+    def __init__(self, flow: _Flow, table: Category) -> None:
+        super().__init__(timeout=120)
+        self._flow = flow
+        self._table = table
+        options = [discord.SelectOption(label="Sem subcategoria", value=NO_SUBCATEGORY)]
+        options += [
+            discord.SelectOption(label=_truncate(sub.name, 100), value=str(sub.id))
+            for sub in table.subcategories[:24]
+        ]
+        self.add_item(ChoiceSelect(options, "Escolha a subcategoria...", self._on_pick))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await _check_author(interaction, self._flow.author_id)
+
+    async def _on_pick(self, interaction: discord.Interaction, value: str) -> None:
+        subcategory_id = None if value == NO_SUBCATEGORY else int(value)
+        await self._flow.ask_score(interaction, self._table, subcategory_id)
 
 
 class ConfirmView(discord.ui.View):
