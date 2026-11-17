@@ -38,6 +38,10 @@ class AddCog(commands.Cog):
     @app_commands.choices(midia=MEDIA_CHOICES)
     @guarded()
     async def add(self, interaction: discord.Interaction, midia: str, busca: str) -> None:
+        busca = busca.strip()
+        if not busca:
+            await interaction.followup.send(embed=embeds.error("Informe o titulo para buscar."))
+            return
         media_type = by_template(midia)
         api = self.bot.api  # type: ignore[attr-defined]
         results = await api.external_search(interaction.user.id, media_type.endpoint, busca)

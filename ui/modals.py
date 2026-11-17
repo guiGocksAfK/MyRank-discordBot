@@ -60,6 +60,8 @@ class _WorkModal(discord.ui.Modal):
         self, label: str, *, default: str | None = None, placeholder: str | None = None,
         required: bool = True, max_length: int | None = None,
     ) -> discord.ui.TextInput[_WorkModal]:
+        if default is not None and max_length is not None:
+            default = default[:max_length]
         field: discord.ui.TextInput[_WorkModal] = discord.ui.TextInput(
             label=_truncate(label, 45), default=default, placeholder=placeholder,
             required=required, max_length=max_length,

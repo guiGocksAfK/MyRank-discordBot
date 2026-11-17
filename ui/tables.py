@@ -16,7 +16,7 @@ from myrank.media import CUSTOM_TEMPLATE, MEDIA_TYPES, template_label
 from myrank.models import Category, CustomField
 from ui import embeds
 from ui.errors import to_embed
-from ui.views import ChoiceSelect, ConfirmView, _check_author, _truncate
+from ui.views import ChoiceSelect, ConfirmView, _check_author, _disable_on_timeout, _truncate
 
 ALL_TEMPLATES: tuple[str, ...] = (*(m.template for m in MEDIA_TYPES), CUSTOM_TEMPLATE)
 MAX_CUSTOM_FIELDS = 5
@@ -59,7 +59,7 @@ class NameModal(discord.ui.Modal):
         super().__init__(title=_truncate(title, 45))
         self._action = action
         self.name: discord.ui.TextInput[NameModal] = discord.ui.TextInput(
-            label=label, default=default, max_length=max_length
+            label=label, default=default[:max_length] if default else None, max_length=max_length
         )
         self.add_item(self.name)
 
@@ -146,11 +146,7 @@ class TablePanel(discord.ui.View):
         return await _check_author(interaction, self.author_id)
 
     async def on_timeout(self) -> None:
-        for child in self.children:
-            if isinstance(child, discord.ui.Button):
-                child.disabled = True
-        if self.message is not None:
-            await self.message.edit(view=self)
+        await _disable_on_timeout(self, self.message)
 
     async def reload(self, discord_id: int) -> None:
         """Busca a tabela de novo e troca o painel por um novo, com os botoes certos."""
@@ -167,10 +163,15 @@ class TablePanel(discord.ui.View):
             works = await self.api.list_works(discord_id, table.id)
         except Exception:
             return  # o painel antigo continua valendo; a mudanca ja foi avisada
+        self.table = table
+        self.work_count = len(works)
         panel = TablePanel(self.api, self.author_id, table, len(works))
         panel.message = self.message
         self.stop()
-        await self.message.edit(embed=panel.embed(), view=panel)
+        try:
+            await self.message.edit(embed=panel.embed(), view=panel)
+        except discord.HTTPException:
+            pass
 
     @discord.ui.button(label="Renomear", style=discord.ButtonStyle.primary, row=0)
     async def rename(

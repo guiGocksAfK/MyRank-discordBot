@@ -17,7 +17,14 @@ from myrank.api import MyRankClient
 from myrank.social import REACTIONS, FeedItem, SocialProfile, SocialUser, TakeComment
 from ui import social_embeds as se
 from ui.errors import to_embed
-from ui.views import ChoiceSelect, ConfirmView, PaginatedView, _check_author, _truncate
+from ui.views import (
+    ChoiceSelect,
+    ConfirmView,
+    PaginatedView,
+    _check_author,
+    _disable_on_timeout,
+    _truncate,
+)
 
 TextAction = Callable[[discord.Interaction, str], Awaitable[None]]
 
@@ -35,14 +42,22 @@ class TextModal(discord.ui.Modal):
     ) -> None:
         super().__init__(title=_truncate(title, 45))
         self._action = action
+        self._min_length = min_length
         self.text: discord.ui.TextInput[TextModal] = discord.ui.TextInput(
-            label=label, style=discord.TextStyle.paragraph, default=default,
+            label=label, style=discord.TextStyle.paragraph,
+            default=default[:max_length] if default else None,
             min_length=min_length, max_length=max_length,
         )
         self.add_item(self.text)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        await self._action(interaction, self.text.value.strip())
+        text = self.text.value.strip()
+        if len(text) < self._min_length:
+            await interaction.response.send_message(
+                f"O texto precisa ter pelo menos {self._min_length} caractere(s).", ephemeral=True
+            )
+            return
+        await self._action(interaction, text)
 
 
 async def _fail(interaction: discord.Interaction, exc: Exception) -> None:
@@ -53,6 +68,8 @@ async def _fail(interaction: discord.Interaction, exc: Exception) -> None:
 # ------------------------------------------------------------------ perfil
 
 class ProfileView(discord.ui.View):
+    message: discord.Message | None = None
+
     def __init__(self, api: MyRankClient, author_id: int, profile: SocialProfile) -> None:
         super().__init__(timeout=300)
         self._api = api
@@ -69,6 +86,9 @@ class ProfileView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return await _check_author(interaction, self._author_id)
 
+    async def on_timeout(self) -> None:
+        await _disable_on_timeout(self, self.message)
+
     @discord.ui.button(label="Seguir", style=discord.ButtonStyle.success)
     async def follow(
         self, interaction: discord.Interaction, button: discord.ui.Button[ProfileView]
@@ -81,9 +101,10 @@ class ProfileView(discord.ui.View):
             await _fail(interaction, exc)
             return
         self.stop()
+        new_view = ProfileView(self._api, self._author_id, profile)
+        new_view.message = self.message
         await interaction.edit_original_response(
-            embed=se.social_profile(profile),
-            view=ProfileView(self._api, self._author_id, profile),
+            embed=se.social_profile(profile), view=new_view,
         )
 
     @discord.ui.button(label="Ver obras", style=discord.ButtonStyle.primary)
@@ -185,7 +206,10 @@ class PeopleView(PaginatedView):
         self._page = min(self._page, self.total_pages - 1)
         self._update_buttons()
         if self.message is not None:
-            await self.message.edit(embed=self.embed(), view=self)
+            try:
+                await self.message.edit(embed=self.embed(), view=self)
+            except discord.HTTPException:
+                pass
 
 
 class FollowRequestView(discord.ui.View):
@@ -260,11 +284,7 @@ class FeedView(discord.ui.View):
         return await _check_author(interaction, self._author_id)
 
     async def on_timeout(self) -> None:
-        for child in self.children:
-            if isinstance(child, (discord.ui.Button, discord.ui.Select)):
-                child.disabled = True
-        if self.message is not None:
-            await self.message.edit(view=self)
+        await _disable_on_timeout(self, self.message)
 
     async def _go(self, interaction: discord.Interaction, page: int) -> None:
         await interaction.response.defer()
@@ -458,6 +478,12 @@ class CommentsView(discord.ui.View):
         except Exception as exc:
             await _fail(interaction, exc)
 
+    async def _back(self, interaction: discord.Interaction) -> None:
+        await interaction.response.edit_message(
+            content=None, embed=se.comments(self._item, self._roots),
+            view=CommentsView(self._api, self._author_id, self._item, self._roots),
+        )
+
     def _pick(
         self, comments: list[TakeComment], placeholder: str,
         on_pick: Callable[[discord.Interaction, TakeComment], Awaitable[None]],
@@ -473,9 +499,7 @@ class CommentsView(discord.ui.View):
         async def picked(interaction: discord.Interaction, value: str) -> None:
             await on_pick(interaction, by_id[value])
 
-        view = discord.ui.View(timeout=120)
-        view.add_item(ChoiceSelect(options, placeholder, picked))
-        return view
+        return _CommentPickView(self, ChoiceSelect(options, placeholder, picked))
 
     @discord.ui.button(label="Comentar", style=discord.ButtonStyle.success)
     async def add(
@@ -532,9 +556,32 @@ class CommentsView(discord.ui.View):
             await inner.response.edit_message(
                 content=("Apagar este comentario?" +
                          (" As respostas dele vao junto." if comment.replies else "")),
-                view=ConfirmView(self._author_id, confirmed),
+                view=ConfirmView(self._author_id, confirmed, on_cancel=self._back),
             )
 
         await interaction.response.edit_message(
             view=self._pick(self._deletable, "Apagar qual?", on_pick)
         )
+
+
+class _BackButton(discord.ui.Button["_CommentPickView"]):
+    def __init__(self, comments_view: CommentsView) -> None:
+        super().__init__(label="Voltar", style=discord.ButtonStyle.secondary, row=1)
+        self._comments_view = comments_view
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if self.view is not None:
+            self.view.stop()
+        await self._comments_view._back(interaction)
+
+
+class _CommentPickView(discord.ui.View):
+    def __init__(self, comments_view: CommentsView, select: ChoiceSelect) -> None:
+        super().__init__(timeout=120)
+        self._comments_view = comments_view
+        self.add_item(select)
+        self.back = _BackButton(comments_view)
+        self.add_item(self.back)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await self._comments_view.interaction_check(interaction)

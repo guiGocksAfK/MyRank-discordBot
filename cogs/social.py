@@ -66,9 +66,15 @@ class SocialCog(commands.GroupCog, group_name="social", group_description="Feed 
     @app_commands.describe(nome="Nome ou parte do nome.")
     @guarded()
     async def buscar(self, interaction: discord.Interaction, nome: str) -> None:
+        termo = nome.strip()
+        if len(termo) < 2:
+            await interaction.followup.send(
+                embed=embeds.error("Digite pelo menos 2 caracteres para buscar.")
+            )
+            return
         api = self.bot.api  # type: ignore[attr-defined]
-        users = await api.search_users(interaction.user.id, nome.strip())
-        view = PeopleView(api, interaction.user.id, f"Pessoas: {nome.strip()}"[:256], users,
+        users = await api.search_users(interaction.user.id, termo)
+        view = PeopleView(api, interaction.user.id, f"Pessoas: {termo}"[:256], users,
                           empty="Ninguem com esse nome.")
         view.message = await interaction.followup.send(embed=view.embed(), view=view, wait=True)
 
