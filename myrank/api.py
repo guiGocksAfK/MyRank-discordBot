@@ -19,6 +19,7 @@ from typing import Any
 
 import httpx
 
+from myrank.account import Account
 from myrank.config import Settings
 from myrank.errors import (
     ApiError,
@@ -26,6 +27,7 @@ from myrank.errors import (
     NotLinkedError,
     RateLimitedError,
 )
+from myrank.insights import Insight, Notification
 from myrank.models import (
     Badge,
     Category,
@@ -33,6 +35,7 @@ from myrank.models import (
     ExternalResult,
     Work,
 )
+from myrank.rankings import CreatorRank
 from myrank.social import (
     FeedItem,
     Reactions,
@@ -43,6 +46,9 @@ from myrank.social import (
 )
 
 log = logging.getLogger(__name__)
+
+# A IA demora mais que o resto da API; o site espera ate 75 s.
+AI_TIMEOUT_SECONDS = 75.0
 
 PEOPLE_LISTS = ("following", "followers", "suggestions", "debaters", "follow-requests")
 
@@ -190,6 +196,31 @@ class MyRankClient:
         path = "/works/unified" if category_id is None else f"/works/category/{category_id}"
         return [Work.from_api(item) for item in _as_list(await self._get(discord_id, path))]
 
+    # ---------------------------------------------------------------- rankings
+
+    async def unified_ranking(
+        self, discord_id: int, sort: str | None = None, table_id: int | None = None
+    ) -> list[Work]:
+        """Ranking geral do site: tabelas do agrupamento "Unificado", ordem manual nos
+        empates; com `table_id`, so aquela tabela. `sort` None = a configuracao "nota
+        ponderada" da conta."""
+        params: dict[str, Any] = {}
+        if sort:
+            params["sort"] = sort
+        if table_id is not None:
+            params["table"] = table_id
+        payload = await self._get(discord_id, "/rankings/unified", params=params)
+        return [Work.from_api(item) for item in _as_list(payload)]
+
+    async def creator_ranking(
+        self, discord_id: int, order: str = "avg", creator_type: str | None = None
+    ) -> list[CreatorRank]:
+        params = {"order": order}
+        if creator_type:
+            params["type"] = creator_type
+        payload = await self._get(discord_id, "/rankings/creators", params=params)
+        return [CreatorRank.from_api(item) for item in _as_list(payload)]
+
     # ---------------------------------------------------------------- conquistas
 
     async def get_badges(self, discord_id: int) -> list[Badge]:
@@ -274,6 +305,54 @@ class MyRankClient:
 
     async def delete_comment(self, discord_id: int, comment_id: int) -> None:
         await self._request(discord_id, "DELETE", f"/social/comments/{comment_id}")
+
+    # ---------------------------------------------------------------- conta
+
+    async def me(self, discord_id: int) -> Account:
+        return Account.from_api(await self._get(discord_id, "/users/me"))
+
+    async def update_me(self, discord_id: int, changes: Json) -> Account:
+        """PUT parcial: campo ausente nao muda."""
+        return Account.from_api(await self._request(discord_id, "PUT", "/users/me", json=changes))
+
+    # ---------------------------------------------------------------- notificacoes
+
+    async def notifications(self, discord_id: int, page: int, size: int) -> list[Notification]:
+        payload = await self._get(
+            discord_id, "/notifications", params={"page": page, "size": size}
+        )
+        return [Notification.from_api(item) for item in _as_list(payload)]
+
+    async def unread_notifications(self, discord_id: int) -> int:
+        payload = await self._get(discord_id, "/notifications/unread-count")
+        return int(payload.get("count") or 0) if isinstance(payload, dict) else 0
+
+    async def read_all_notifications(self, discord_id: int) -> None:
+        await self._request(discord_id, "POST", "/notifications/read-all")
+
+    # ---------------------------------------------------------------- IA Insights
+
+    async def latest_insight(self, discord_id: int) -> Insight | None:
+        """None quando a pessoa ainda nao gerou nenhuma analise (204 do backend)."""
+        payload = await self._get(discord_id, "/insights/latest", timeout=AI_TIMEOUT_SECONDS)
+        return Insight.from_api(payload) if isinstance(payload, dict) and payload else None
+
+    async def generate_insight(
+        self, discord_id: int, work_ids: list[int], *, refresh: bool = False
+    ) -> Insight:
+        """Reaproveita a analise da mesma selecao (cache do backend) se `refresh` for
+        False. Gerar de verdade gasta 1 das mensagens de IA do dia."""
+        return Insight.from_api(await self._request(
+            discord_id, "POST", "/insights/generate",
+            json={"workIds": work_ids, "refresh": refresh}, timeout=AI_TIMEOUT_SECONDS,
+        ))
+
+    async def ask_insight(self, discord_id: int, insight_id: int, question: str) -> Insight:
+        """Pergunta de follow-up; gasta 1 das mensagens de IA do dia."""
+        return Insight.from_api(await self._request(
+            discord_id, "POST", f"/insights/{insight_id}/chat",
+            json={"question": question}, timeout=AI_TIMEOUT_SECONDS,
+        ))
 
     # ---------------------------------------------------------------- transporte
 
