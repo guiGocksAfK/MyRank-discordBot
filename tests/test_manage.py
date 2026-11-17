@@ -5,11 +5,13 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import discord
 import pytest
 
 from myrank.media import TV
 from myrank.models import Category, CustomField, ExternalDetails, ExternalResult, Subcategory, Work
 from myrank.works import edit_payload, refresh_payload
+from ui import embeds
 from ui.modals import (
     INVALID,
     CustomFieldsModal,
@@ -216,3 +218,44 @@ async def test_refresh_without_id_asks_which_result() -> None:
     api.external_details.assert_awaited_once_with(123, "tv", "1")
     payload = api.update_work.call_args.args[2]
     assert payload["details"]["externalId"] == "1"
+
+
+def test_embeds_respect_discord_limits_and_empty_custom_fields() -> None:
+    long_title = "A" * 300
+    assert len(embeds.base(long_title).title or "") == 256
+    work = Work(1, long_title, 9.0, 9.5, 60, position=1)
+    ranking = embeds.ranking([work], 0, 1, 1, "Categoria")
+    assert len(ranking.fields[0].name or "") == 256
+
+    tabela = Category(
+        4, "Lugares", templates=("custom",),
+        custom_fields=(
+            CustomField("f_vazio", "Vazio", "TEXT"),
+            CustomField("f_zero", "Zero", "NUMBER"),
+            CustomField("f_nao", "Volto?", "BOOLEAN"),
+        ),
+    )
+    obra = Work(
+        2, "Lugar", 8.0, 8.0, 0, 4, template="custom",
+        details={"fields": {"f_vazio": "", "f_zero": 0, "f_nao": False}},
+    )
+    detail = embeds.work_detail(obra, tabela)
+    fields = {f.name: f.value for f in detail.fields}
+    assert "Vazio" not in fields
+    assert fields["Zero"] == "0"
+    assert fields["Volto?"] == "Nao"
+
+
+async def test_manage_saved_ignores_discord_http_error() -> None:
+    panel = ManageView(MagicMock(), 123, SERIE, TABELA_SERIES)
+    panel.message = MagicMock()
+    response = MagicMock(status=404, reason="Not Found")
+    panel.message.edit = AsyncMock(side_effect=discord.HTTPException(response, "Unknown Message"))
+    await panel.saved(SERIE)
+    panel.message.edit.assert_awaited_once()
+
+
+def test_non_http_cover_urls_are_ignored_in_embeds() -> None:
+    work = Work(1, "Capa Data", 8.0, 8.0, 0, image_url="data:image/png;base64,abc")
+    assert not embeds.work_detail(work).thumbnail.url
+    assert not embeds.profile("Gui", "data:image/png;base64,abc", 1, 8.0, 0, 1).thumbnail.url

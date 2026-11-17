@@ -15,6 +15,8 @@ EXPECTED = {
     "perfil", "ranking", "conquistas", "add", "add-manual", "manage",
     "tabela listar", "tabela criar", "tabela editar", "take",
     "social feed", "social pessoas", "social buscar", "social pedidos",
+    "notificacoes", "insights gerar", "insights ver", "insights perguntar", "config",
+    "criadores",
 }
 
 
