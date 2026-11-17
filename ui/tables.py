@@ -98,6 +98,8 @@ async def _run(
 # ------------------------------------------------------------------ criar
 
 class CreateTableView(discord.ui.View):
+    message: discord.Message | None = None
+
     def __init__(self, api: MyRankClient, author_id: int, name: str) -> None:
         super().__init__(timeout=180)
         self._api = api
@@ -107,6 +109,9 @@ class CreateTableView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return await _check_author(interaction, self._author_id)
+
+    async def on_timeout(self) -> None:
+        await _disable_on_timeout(self, self.message)
 
     async def _on_pick(self, interaction: discord.Interaction, templates: list[str]) -> None:
         await interaction.response.defer()
@@ -253,7 +258,12 @@ class TablePanel(discord.ui.View):
                 content=f"Tabela **{self.table.name}** excluida.", embed=None, view=None
             )
 
-        confirm = ConfirmView(self.author_id, confirmed)
+        async def cancel(inner: discord.Interaction) -> None:
+            panel = TablePanel(self.api, self.author_id, self.table, self.work_count)
+            panel.message = self.message
+            await inner.response.edit_message(content=None, embed=panel.embed(), view=panel)
+
+        confirm = ConfirmView(self.author_id, confirmed, on_cancel=cancel)
         await interaction.response.edit_message(
             content=embeds.delete_table_warning(self.table, self.work_count), embed=None,
             view=confirm,

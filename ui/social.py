@@ -403,10 +403,14 @@ class TakeView(discord.ui.View):
                 return
             await inner.edit_original_response(content="Take apagado.", embed=None, view=None)
 
+        async def cancel(inner: discord.Interaction) -> None:
+            embed, view = self.redraw(self.item)
+            await inner.response.edit_message(content=None, embed=embed, view=view)
+
         self.stop()
         await interaction.response.edit_message(
             content="Apagar este take? Os comentarios e as reacoes vao junto.",
-            view=ConfirmView(self._author_id, confirmed),
+            view=ConfirmView(self._author_id, confirmed, on_cancel=cancel),
         )
 
 

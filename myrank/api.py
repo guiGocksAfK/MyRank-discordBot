@@ -410,6 +410,12 @@ class MyRankClient:
         if status == 429:
             raise RateLimitedError(_retry_after(response))
 
+        if status in (502, 503):
+            log.warning(
+                "Erro %s do backend em %s %s: %s", status, method, path, response.text[:500]
+            )
+            raise ApiUnavailableError(_error_message(response, default=GENERIC_SERVER_MESSAGE))
+
         if status >= 500:
             # Detalhe do servidor fica no log; o usuario recebe texto generico.
             log.error("Erro %s do backend em %s %s: %s", status, method, path, response.text[:500])
@@ -439,18 +445,20 @@ def _as_list(payload: Any) -> list[Json]:
     return []
 
 
-def _error_message(response: httpx.Response) -> str:
+def _error_message(
+    response: httpx.Response, default: str = "Nao foi possivel completar a operacao."
+) -> str:
     """Mensagem do GlobalExceptionHandler do backend, quando houver."""
     try:
         body = response.json()
     except ValueError:
-        return "Nao foi possivel completar a operacao."
+        return default
     if isinstance(body, dict):
         for key in ("message", "error", "detail"):
             value = body.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
-    return "Nao foi possivel completar a operacao."
+    return default
 
 
 def _retry_after(response: httpx.Response) -> float | None:

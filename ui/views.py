@@ -493,12 +493,14 @@ class ConfirmView(discord.ui.View):
     async def confirm(
         self, interaction: discord.Interaction, button: discord.ui.Button[ConfirmView]
     ) -> None:
+        self.stop()
         await self._on_confirm(interaction)
 
     @discord.ui.button(label="Cancelar", style=discord.ButtonStyle.secondary)
     async def cancel(
         self, interaction: discord.Interaction, button: discord.ui.Button[ConfirmView]
     ) -> None:
+        self.stop()
         if self._on_cancel is not None:
             await self._on_cancel(interaction)
             return
@@ -682,7 +684,14 @@ class ManageView(discord.ui.View):
     async def remove(
         self, interaction: discord.Interaction, button: discord.ui.Button[ManageView]
     ) -> None:
-        confirm_view = ConfirmView(self._author_id, self._confirm_remove)
+        async def cancel(inner: discord.Interaction) -> None:
+            panel = ManageView(self._api, self._author_id, self._work, self._table)
+            panel.message = self.message
+            await inner.response.edit_message(
+                content=None, embed=embeds.work_detail(self._work, self._table), view=panel
+            )
+
+        confirm_view = ConfirmView(self._author_id, self._confirm_remove, on_cancel=cancel)
         await interaction.response.edit_message(
             content=f"Tem certeza que quer remover **{self._work.title}**?",
             embed=None,
