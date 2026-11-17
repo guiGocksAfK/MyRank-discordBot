@@ -213,3 +213,20 @@ async def test_client_routes_and_ai_timeout(make_client: ClientFactory) -> None:
     # A IA espera mais que o resto da API.
     assert seen[0][3]["read"] == 10.0
     assert seen[4][3]["read"] == 75.0
+
+
+async def test_insight_view_preserves_message_and_disables_on_timeout() -> None:
+    api: Any = MagicMock()
+    api.ask_insight = AsyncMock(return_value=INSIGHT)
+    view = InsightView(api, 123, INSIGHT)
+    msg = MagicMock()
+    msg.edit = AsyncMock()
+    view.message = msg
+    i = interaction()
+    await view.show_chat.callback(i)
+    new_view = i.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(new_view, InsightView)
+    assert new_view.message is msg
+    await new_view.on_timeout()
+    assert all(c.disabled for c in new_view.children if isinstance(c, discord.ui.Button))
+    msg.edit.assert_awaited_once()

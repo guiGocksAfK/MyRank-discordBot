@@ -169,3 +169,24 @@ async def test_client_account_routes(make_client: ClientFactory) -> None:
     assert account.is_public and account.muted_notifications == ("TAKES",)
     await client.update_me(1, {"language": "EN"})
     assert seen == [("GET", "/api/users/me", None), ("PUT", "/api/users/me", {"language": "EN"})]
+
+
+async def test_config_view_preserves_message_and_disables_on_timeout() -> None:
+    api: Any = MagicMock()
+    api.update_me = AsyncMock(return_value=CONTA)
+    view = ConfigView(api, 123, CONTA)
+    msg = MagicMock()
+    msg.edit = AsyncMock()
+    view.message = msg
+    i = interaction()
+    await view.save(i, {"weightedByDefault": True})
+    new_view = i.edit_original_response.call_args.kwargs["view"]
+    assert isinstance(new_view, ConfigView)
+    assert new_view.message is msg
+    await new_view.on_timeout()
+    assert all(
+        c.disabled
+        for c in new_view.children
+        if isinstance(c, (discord.ui.Button, discord.ui.Select))
+    )
+    msg.edit.assert_awaited_once()

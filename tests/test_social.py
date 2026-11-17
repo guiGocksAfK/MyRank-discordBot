@@ -369,3 +369,14 @@ async def test_comments_pick_back_and_delete_cancel_return_to_comments() -> None
     k = interaction()
     await confirm.cancel.callback(k)
     assert isinstance(k.response.edit_message.call_args.kwargs["view"], CommentsView)
+
+
+async def test_delete_take_cancel_restores_take_view() -> None:
+    view = TakeView(MagicMock(), 123, TAKE)
+    i = interaction()
+    await view.delete.callback(i)
+    confirm = i.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(confirm, ConfirmView)
+    j = interaction()
+    await confirm.cancel.callback(j)
+    assert isinstance(j.response.edit_message.call_args.kwargs["view"], TakeView)
