@@ -20,7 +20,7 @@ from ui.modals import (
     format_release_date,
     parse_custom_value,
 )
-from ui.views import ManageView, RefreshPickView, SubcategoryMoveView
+from ui.views import ConfirmView, ManageView, RefreshPickView, SubcategoryMoveView
 
 SERIE = Work(
     7, "Breaking Bad", 9.0, 9.5, 3000, 2, "Series", "https://img/bb.jpg", "Vince Gilligan",
@@ -39,6 +39,7 @@ def interaction() -> Any:
     value = MagicMock()
     value.user.id = 123
     value.response.defer = AsyncMock()
+    value.response.edit_message = AsyncMock()
     value.response.send_modal = AsyncMock()
     value.response.send_message = AsyncMock()
     value.edit_original_response = AsyncMock()
@@ -259,3 +260,19 @@ def test_non_http_cover_urls_are_ignored_in_embeds() -> None:
     work = Work(1, "Capa Data", 8.0, 8.0, 0, image_url="data:image/png;base64,abc")
     assert not embeds.work_detail(work).thumbnail.url
     assert not embeds.profile("Gui", "data:image/png;base64,abc", 1, 8.0, 0, 1).thumbnail.url
+
+
+async def test_remove_cancel_restores_manage_panel() -> None:
+    panel = ManageView(MagicMock(), 123, SERIE, TABELA_SERIES)
+    msg = MagicMock()
+    panel.message = msg
+    i = interaction()
+    i.original_response = AsyncMock(return_value=msg)
+    await panel.remove.callback(i)
+    confirm = i.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(confirm, ConfirmView)
+    j = interaction()
+    await confirm.cancel.callback(j)
+    restored = j.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(restored, ManageView)
+    assert restored.message is msg

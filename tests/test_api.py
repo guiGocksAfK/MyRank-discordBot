@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from myrank.api import GENERIC_SERVER_MESSAGE
 from myrank.errors import (
     ApiError,
     ApiUnavailableError,
@@ -153,3 +154,18 @@ async def test_external_details_without_id(make_client: ClientFactory) -> None:
     # A resposta nao traz o id: o client preenche com o que pediu.
     assert details.external_id == "1396"
     assert details.details == {"seasons": 5, "status": "Ended"}
+
+
+async def test_503_json_preserves_friendly_message_and_non_json_uses_generic(
+    make_client: ClientFactory,
+) -> None:
+    msg = "O serviço de IA está instável agora."
+    client_503 = await make_client(lambda _: json_response({"message": msg}, 503))
+    with pytest.raises(ApiUnavailableError) as exc_json:
+        await client_503.latest_insight(1)
+    assert str(exc_json.value) == msg
+
+    client_proxy = await make_client(lambda _: httpx.Response(502, text="<html>Bad Gateway</html>"))
+    with pytest.raises(ApiUnavailableError) as exc_html:
+        await client_proxy.get_categories(1)
+    assert str(exc_html.value) == GENERIC_SERVER_MESSAGE

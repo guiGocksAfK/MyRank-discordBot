@@ -249,3 +249,19 @@ async def test_client_table_routes(make_client: ClientFactory) -> None:
         ("DELETE", "/api/categories/1/subcategories/5", None),
         ("DELETE", "/api/categories/1", None),
     ]
+
+
+async def test_delete_table_cancel_restores_panel() -> None:
+    panel = TablePanel(MagicMock(), 123, LIVROS, 4)
+    msg = MagicMock()
+    panel.message = msg
+    i = interaction()
+    i.original_response.return_value = msg
+    await panel.delete.callback(i)
+    confirm = i.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(confirm, ConfirmView)
+    j = interaction()
+    await confirm.cancel.callback(j)
+    restored = j.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(restored, TablePanel)
+    assert restored.message is msg and restored.work_count == 4
