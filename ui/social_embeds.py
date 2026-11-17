@@ -8,11 +8,10 @@ from myrank.social import (
     REACTIONS,
     FeedItem,
     SocialProfile,
-    SocialSummary,
     SocialUser,
     TakeComment,
 )
-from ui.embeds import base
+from ui.embeds import _valid_url, base
 
 # Chaves de `breakdown` e `WorkMini.type` (TableTemplate.type() no backend).
 TYPE_LABELS = {
@@ -38,17 +37,6 @@ def _br_date(iso: str | None) -> str:
 
 def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
-def summary_fields(embed: discord.Embed, summary: SocialSummary) -> discord.Embed:
-    embed.add_field(name="Seguidores", value=str(summary.followers))
-    embed.add_field(name="Seguindo", value=str(summary.following))
-    if summary.pending_follow_requests:
-        embed.add_field(
-            name="Pedidos para seguir",
-            value=f"{summary.pending_follow_requests} -- veja em `/social pedidos`",
-        )
-    return embed
 
 
 def follow_label(profile: SocialProfile | SocialUser) -> str:
@@ -180,7 +168,7 @@ def take(item: FeedItem) -> discord.Embed:
         embed.add_field(name="Nota", value=f"{item.score:.1f}")
     embed.add_field(name="Reacoes", value=reactions_text(item), inline=False)
     embed.add_field(name="Comentarios", value=str(item.comment_count))
-    if item.work and item.work.image_url:
+    if item.work and _valid_url(item.work.image_url):
         embed.set_thumbnail(url=item.work.image_url)
     footer = _br_date(item.created_at) + (" · editado" if item.take_edited else "")
     if footer.strip(" ·"):

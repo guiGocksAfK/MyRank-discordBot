@@ -10,6 +10,7 @@ diferem nas opcoes e no callback, entao o componente generico nasce direto.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 import discord
 
@@ -22,6 +23,7 @@ from myrank.media import (
     template_label,
 )
 from myrank.models import Badge, Category, ExternalDetails, ExternalResult, Work
+from myrank.rankings import CreatorRank
 from myrank.works import change_template_payload, refresh_payload
 from ui import embeds
 from ui.errors import to_embed
@@ -47,6 +49,20 @@ async def _check_author(interaction: discord.Interaction, author_id: int) -> boo
 
 def _truncate(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+async def _disable_on_timeout(
+    view: discord.ui.View, message: discord.Message | None, **edit_kwargs: Any
+) -> None:
+    """Desabilita botoes e selects no timeout, ignorando mensagem apagada/expirada."""
+    for child in view.children:
+        if isinstance(child, (discord.ui.Button, discord.ui.Select)):
+            child.disabled = True
+    if message is not None:
+        try:
+            await message.edit(view=view, **edit_kwargs)
+        except discord.HTTPException:
+            pass
 
 
 class PaginatedView(discord.ui.View):
@@ -89,11 +105,7 @@ class PaginatedView(discord.ui.View):
         return await _check_author(interaction, self._author_id)
 
     async def on_timeout(self) -> None:
-        for child in self.children:
-            if isinstance(child, discord.ui.Button):
-                child.disabled = True
-        if self.message is not None:
-            await self.message.edit(view=self)
+        await _disable_on_timeout(self, self.message)
 
     def _update_buttons(self) -> None:
         self.previous_page.disabled = self._page == 0
@@ -119,10 +131,14 @@ class PaginatedView(discord.ui.View):
 class RankingView(PaginatedView):
     """O bot nao reordena `works` -- a posicao no ranking e responsabilidade da API."""
 
-    def __init__(self, works: list[Work], author_id: int, category_name: str | None) -> None:
+    def __init__(
+        self, works: list[Work], author_id: int, category_name: str | None,
+        sort: str | None = None,
+    ) -> None:
         super().__init__(len(works), author_id)
         self._works = works
         self._category_name = category_name
+        self._sort = sort
 
     def embed(self) -> discord.Embed:
         return embeds.ranking(
@@ -131,6 +147,25 @@ class RankingView(PaginatedView):
             self.current_page,
             self.total_pages,
             self._category_name,
+            self._sort,
+        )
+
+
+class CreatorsView(PaginatedView):
+    """Ranking de criadores, ja ordenado pelo backend."""
+
+    def __init__(
+        self, creators: list[CreatorRank], author_id: int, order: str, creator_type: str | None,
+    ) -> None:
+        super().__init__(len(creators), author_id)
+        self._creators = creators
+        self._order = order
+        self._type = creator_type
+
+    def embed(self) -> discord.Embed:
+        return embeds.creators(
+            self._creators[self.page_slice], self.page_start, self.current_page,
+            self.total_pages, self._order, self._type,
         )
 
 
@@ -439,20 +474,20 @@ class ConfirmView(discord.ui.View):
         on_confirm: Callable[[discord.Interaction], Awaitable[None]],
         *,
         timeout: float = 30,
+        on_cancel: Callable[[discord.Interaction], Awaitable[None]] | None = None,
     ) -> None:
         super().__init__(timeout=timeout)
         self._author_id = author_id
         self._on_confirm = on_confirm
+        self._on_cancel = on_cancel
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return await _check_author(interaction, self._author_id)
 
     async def on_timeout(self) -> None:
-        for child in self.children:
-            if isinstance(child, discord.ui.Button):
-                child.disabled = True
-        if self.message is not None:
-            await self.message.edit(content="Tempo esgotado -- nada foi alterado.", view=self)
+        await _disable_on_timeout(
+            self, self.message, content="Tempo esgotado -- nada foi alterado."
+        )
 
     @discord.ui.button(label="Confirmar", style=discord.ButtonStyle.danger)
     async def confirm(
@@ -464,6 +499,9 @@ class ConfirmView(discord.ui.View):
     async def cancel(
         self, interaction: discord.Interaction, button: discord.ui.Button[ConfirmView]
     ) -> None:
+        if self._on_cancel is not None:
+            await self._on_cancel(interaction)
+            return
         await interaction.response.edit_message(content="Cancelado.", embed=None, view=None)
 
 
@@ -507,11 +545,7 @@ class ManageView(discord.ui.View):
         return await _check_author(interaction, self._author_id)
 
     async def on_timeout(self) -> None:
-        for child in self.children:
-            if isinstance(child, discord.ui.Button):
-                child.disabled = True
-        if self.message is not None:
-            await self.message.edit(view=self)
+        await _disable_on_timeout(self, self.message)
 
     async def saved(self, work: Work) -> None:
         """Chamado pelos modais e selects depois que o backend gravou.
@@ -525,7 +559,10 @@ class ManageView(discord.ui.View):
         panel = ManageView(self._api, self._author_id, work, self._table)
         panel.message = self.message
         self.stop()
-        await self.message.edit(embed=embeds.work_detail(work, self._table), view=panel)
+        try:
+            await self.message.edit(embed=embeds.work_detail(work, self._table), view=panel)
+        except discord.HTTPException:
+            pass
 
     @discord.ui.button(label="Editar nota", style=discord.ButtonStyle.primary, row=0)
     async def edit_score(

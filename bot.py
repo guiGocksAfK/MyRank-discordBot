@@ -25,6 +25,8 @@ COGS: tuple[str, ...] = (
     "cogs.manage",
     "cogs.tabela",
     "cogs.social",
+    "cogs.insights",
+    "cogs.config",
 )
 
 

@@ -10,6 +10,7 @@ import discord
 
 from myrank.media import CUSTOM_TEMPLATE, MediaType, template_label
 from myrank.models import Badge, Category, ExternalDetails, ExternalResult, Work
+from myrank.rankings import CreatorRank
 
 ACCENT = discord.Color(0xD4AF37)
 DANGER = discord.Color(0xB3261E)
@@ -17,8 +18,12 @@ DANGER = discord.Color(0xB3261E)
 SITE_URL = "https://myrank.duckdns.org"
 
 
+def _valid_url(url: str | None) -> bool:
+    return bool(url and url.startswith(("https://", "http://")))
+
+
 def base(title: str, description: str | None = None) -> discord.Embed:
-    return discord.Embed(title=title, description=description, color=ACCENT)
+    return discord.Embed(title=title[:256], description=description, color=ACCENT)
 
 
 def profile(
@@ -40,36 +45,69 @@ def profile(
         value=f"{average_score:.1f}" if average_score is not None else "-",
     )
     embed.add_field(name="Conquistas", value=f"{badges_unlocked}/{badges_total}")
-    if avatar_url:
+    if _valid_url(avatar_url):
         embed.set_thumbnail(url=avatar_url)
     return embed
 
 
+SORT_TITLES = {"score": "por nota", "weighted": "por nota ponderada", "time": "por tempo"}
+
+
 def ranking(
-    works: list[Work], start_index: int, page: int, total_pages: int, category_name: str | None
+    works: list[Work], start_index: int, page: int, total_pages: int, category_name: str | None,
+    sort: str | None = None,
 ) -> discord.Embed:
-    """Uma pagina do ranking. Filtrado por categoria, usa `work.position` (pronto do
-    backend); em "geral" (todas as categorias juntas) esse campo repete entre
-    categorias diferentes, entao a numeracao cai pra ordem da lista mesmo --
-    `start_index` e a posicao (0-based) do primeiro item da pagina nessa lista."""
+    """Uma pagina do ranking, na ordem que o backend devolveu (`/rankings/unified`):
+    a posicao e a da lista. `start_index` e a posicao (0-based) do primeiro item da
+    pagina. Com `sort`, o valor mostrado e o que ordenou."""
     title = f"Ranking - {category_name}" if category_name else "Ranking geral"
+    if sort in SORT_TITLES:
+        title += f" ({SORT_TITLES[sort]})"
     embed = base(title)
     if not works:
         embed.description = "Nenhuma obra avaliada ainda."
         return embed
 
-    use_position = category_name is not None
     for offset, work in enumerate(works, start=1):
-        rank = (
-            work.position
-            if (use_position and work.position is not None)
-            else start_index + offset
-        )
-        value = f"Nota final: {work.final_score:.1f}"
+        rank = start_index + offset
+        if sort == "score":
+            value = f"Nota: {work.score:.1f}"
+        else:
+            value = f"Nota final: {work.final_score:.1f}"
         if work.time_minutes:
             value += f" | {work.time_minutes} min"
-        embed.add_field(name=f"#{rank}. {work.title}", value=value, inline=False)
+        if not category_name and work.category_name:
+            value += f" | {work.category_name}"
+        embed.add_field(name=f"#{rank}. {work.title}"[:256], value=value[:1024], inline=False)
 
+    embed.set_footer(text=f"Pagina {page}/{total_pages}")
+    return embed
+
+
+CREATOR_ORDER_TITLES = {"avg": "por media", "weighted": "ponderado", "works": "por obras"}
+
+
+def creators(
+    items: list[CreatorRank], start_index: int, page: int, total_pages: int,
+    order: str, creator_type: str | None,
+) -> discord.Embed:
+    """Uma pagina do ranking de criadores. Media, nota ponderada e contagem vem prontas
+    do backend; aqui so se escreve."""
+    title = f"Criadores -- {creator_type}" if creator_type else "Criadores"
+    title += f" ({CREATOR_ORDER_TITLES.get(order, order)})"
+    embed = base(title)
+    if not items:
+        embed.description = "Nenhum criador ainda: preencha o criador das suas obras."
+        return embed
+    for offset, item in enumerate(items, start=1):
+        obras = "1 obra" if item.count == 1 else f"{item.count} obras"
+        value = f"{item.type} · {obras} · media {item.average:.1f}"
+        if order == "weighted":
+            value += f" · ponderada {item.score:.1f}"
+        if item.works:
+            value += "\n" + ", ".join(w.title for w in item.works)
+        embed.add_field(name=f"#{start_index + offset}. {item.name}"[:256], value=value[:1024],
+                        inline=False)
     embed.set_footer(text=f"Pagina {page}/{total_pages}")
     return embed
 
@@ -90,7 +128,9 @@ def badges(items: list[Badge], page: int, total_pages: int) -> discord.Embed:
         else:
             bar = _progress_bar(badge.progress_ratio)
             value = f"{badge.description}\n{bar} {badge.progress}/{badge.target}"
-        embed.add_field(name=f"{icon} {badge.name}", value=value, inline=False)
+        embed.add_field(
+            name=f"{icon} {badge.name}"[:256], value=(value or "-")[:1024], inline=False
+        )
 
     embed.set_footer(text=f"Pagina {page}/{total_pages}")
     return embed
@@ -104,14 +144,14 @@ def _progress_bar(ratio: float, length: int = 10) -> str:
 def pick_table(details: ExternalDetails) -> discord.Embed:
     """Aparece quando mais de uma tabela aceita esse tipo -- o bot pergunta."""
     embed = base(details.title, "Em qual tabela essa obra entra?")
-    if details.image_url:
+    if _valid_url(details.image_url):
         embed.set_thumbnail(url=details.image_url)
     return embed
 
 
 def pick_subcategory(title: str, image_url: str | None, table: Category) -> discord.Embed:
     embed = base(title[:256], f"Quer colocar numa subcategoria de **{table.name}**?")
-    if image_url:
+    if _valid_url(image_url):
         embed.set_thumbnail(url=image_url)
     return embed
 
@@ -156,9 +196,9 @@ def _work_fields(
         values = values if isinstance(values, dict) else {}
         for field in table.custom_fields:
             value = values.get(field.id)
-            if value is not None:
+            if value is not None and value != "":
                 embed.add_field(name=field.name[:256], value=_custom_value(value)[:1024])
-    if work.image_url:
+    if _valid_url(work.image_url):
         embed.set_thumbnail(url=work.image_url)
     return embed
 
@@ -286,7 +326,7 @@ def search_result(
     embed.add_field(name="Ano", value=result.year or "Nao informado")
     if result.creator:
         embed.add_field(name="De", value=result.creator[:1024])
-    if result.poster_url:
+    if _valid_url(result.poster_url):
         embed.set_image(url=result.poster_url)
     else:
         embed.description = (embed.description or "") + "\nCapa nao disponivel."
@@ -320,6 +360,6 @@ def external_preview(details: ExternalDetails, media: MediaType) -> discord.Embe
         value = details.details.get(key)
         if value not in (None, "", 0):
             embed.add_field(name=label, value=str(value)[:1024])
-    if details.image_url:
+    if _valid_url(details.image_url):
         embed.set_image(url=details.image_url)
     return embed
