@@ -9,33 +9,26 @@ do bot só vale nas rotas da lista `BOT_ROUTES` (ver "Rotas" em decisoes.md).
 
 ## Estado atual
 
-Pronto: `/perfil`, `/ranking`, `/conquistas`, `/add` (as 8 mídias, com tipo, ficha e
-subcategoria, igual ao site), `/add-manual` (obra digitada, inclusive Personalizado) e
-`/manage` (editar nota, remover). Ainda não está no ar:
-falta subir na VM e pôr a chave do bot no backend de lá.
+**Fase 1 (obras e tabelas) pronta**, sem mudar nada no backend: `/perfil`, `/ranking`,
+`/conquistas`, `/add` (as 8 mídias, com tipo, ficha e subcategoria, igual ao site),
+`/add-manual` (obra digitada, inclusive Personalizado), `/manage` (nota, dados, capa,
+tipo, subcategoria, campos próprios, "Atualizar dados" e remover) e `/tabela` (listar,
+criar, renomear, tipos, subcategorias, campos próprios e excluir).
 
-## Fase 1 — Obras e tabelas completas
+**Fase 2 (social) pronta no bot:** `/perfil <pessoa>` (com seguir, pedir para seguir
+e obras), `/social feed` (takes e avaliações, reações e comentários), `/social pessoas`
+(seguindo, seguidores, sugestões, debatedores), `/social buscar`, `/social pedidos` e
+`/take`. Precisa do backend com `/api/social` na lista do bot (branch `bot-social` do
+MyRank-backend).
 
-Tudo aqui usa rotas que o bot já pode chamar (`/api/works`, `/api/categories`,
-`/api/external`). O backend não muda.
+Ainda não está no ar: falta testar no Discord, subir o backend com a branch
+`bot-social`, subir o bot na VM e pôr a chave do bot no backend de lá.
 
-- **`/manage` edita tudo o que o site edita:** título, data, tempo, criador,
-  subcategoria e campos próprios da tabela, além de "Atualizar dados".
-- **`/tabela`:** criar, renomear e excluir tabelas; criar, renomear e excluir
-  subcategorias; editar os campos próprios.
+## Fase 2 — o que sobrou
 
-## Fase 2 — Social
-
-Backend: liberar `/api/social`.
-
-- **Ver o perfil de outra pessoa:** `/perfil @alguém` ou por nome. Perfil privado de
-  quem você não segue aparece trancado, igual no site (quem decide é o backend).
-- **Buscar pessoas, seguir e deixar de seguir.** Seguidores, seguindo e sugestões.
-- **Pedidos para seguir:** listar, aprovar e recusar.
-- **Feed:** ver o feed com páginas e reagir aos eventos.
-- **Takes:** escrever, editar e apagar; ler e escrever comentários (com resposta),
-  editar e apagar os seus.
-- **Debatedores e gosto parecido:** as listas que o site mostra na aba social.
+- **`/perfil @alguém` pela menção do Discord.** Hoje é pelo nome no MyRank. A menção
+  precisa de uma rota nova no backend que diga qual conta do MyRank é de um Discord,
+  e isso expõe a ligação entre as duas contas para quem usa o bot. A decidir.
 
 ## Fase 3 — Notificações e IA
 

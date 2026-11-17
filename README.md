@@ -15,12 +15,20 @@ progresso de conquista, nem ranking. Toda regra de negócio mora no backend Java
 
 | Comando | O que faz |
 |---|---|
-| `/perfil` | Seu resumo: quantas obras, média das notas e conquistas. |
+| `/perfil [pessoa]` | Seu resumo (obras, média, conquistas, seguidores), ou o perfil de outra pessoa, com o botão de seguir. |
+| `/social feed [so_quem_sigo]` | O feed, com páginas; abra um take para reagir, comentar, editar ou apagar. |
+| `/social pessoas <lista>` | Seguindo, seguidores, sugestões ou debatedores, com gosto parecido e obras em comum. |
+| `/social buscar <nome>` | Procura pessoas no MyRank. |
+| `/social pedidos` | Aprova ou recusa pedidos para seguir o seu perfil privado. |
+| `/take <obra> <texto>` | Escreve um take (de 3 a 280 caracteres) sobre uma obra sua. |
 | `/ranking [categoria]` | Suas obras na ordem do ranking, com páginas. |
 | `/conquistas` | Conquistas desbloqueadas e o progresso das que faltam. |
 | `/add <mídia> <busca>` | Busca a obra (com capa), confirma os dados, escolhe a tabela e a subcategoria e pede a nota. |
 | `/add-manual <tabela> [tipo]` | Cadastra uma obra digitando os dados, para o que não existe em nenhuma busca. |
-| `/manage <obra>` | Edita a nota ou remove uma obra sua (com confirmação). |
+| `/manage <obra>` | Painel da obra: nota, dados (título, criador, lançamento, tempo, capa), tipo, subcategoria, campos próprios, "Atualizar dados" e remover. |
+| `/tabela listar` | Suas tabelas, com tipos e subcategorias. |
+| `/tabela criar <nome>` | Cria uma tabela e pergunta os tipos de obra que ela aceita. |
+| `/tabela editar <tabela>` | Painel da tabela: renomear, tipos, subcategorias, campos próprios e excluir. |
 
 O `/add` cobre as 8 mídias do site (filme, série, anime, mangá, jogo, livro, música e
 álbum) e grava a obra como o site grava: com o tipo e a ficha da busca. As tabelas
@@ -129,6 +137,10 @@ O suporte ao bot já está no `master` do
 [MyRank-backend](https://github.com/guiGocksAfK/MyRank-backend): coluna
 `users.discord_id`, `BotAuthenticationFilter` (chave + lista de rotas) e rate limit
 por usuário do Discord no `RateLimitFilter`.
+
+Os comandos sociais (`/social`, `/take` e `/perfil <pessoa>`) precisam também de
+`/api/social` na lista de rotas do bot, que está na branch `bot-social` do backend.
+Sem ela, esses comandos respondem que o MyRank não respondeu e o log mostra um 403.
 
 ## License
 

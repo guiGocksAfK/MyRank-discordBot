@@ -50,8 +50,54 @@ O que já foi decidido e por quê. O que falta fazer fica em [ROADMAP.md](ROADMA
   `/manage`. Tabela mista pergunta o tipo antes.
 - **Lançamento aceita ano ou data** (`2008` ou `20/01/2008`); só o ano vira 1º de
   janeiro, como o backend já faz com o Google Books.
+- **O `/manage` é um painel com botões**, e só mostra o que faz sentido para a obra:
+  "Subcategoria" se a tabela tiver alguma, "Campos próprios" em obra Personalizado com
+  campos, "Atualizar dados" em obra de um tipo com busca. Depois de cada edição o
+  painel é redesenhado com a obra que o backend devolveu.
+- **"Atualizar dados" faz o mesmo que o botão do site:** busca a ficha de novo pelo
+  `externalId` e só troca o que muda com o tempo; capa e data só entram se estiverem
+  vazias. Obra antiga, sem `externalId`, mostra os resultados da busca pelo título
+  para a pessoa escolher, para não ligar a obra a um remake.
+- **Apagar no "Editar dados":** criador e capa vazios apagam, como no site. A data
+  vazia mantém a que está, porque o backend não tem como apagar a data numa edição.
 - **Editar manda só o que mudou.** O `PUT` do backend é parcial; mandar a obra inteira
   arriscaria apagar a ficha ou a subcategoria.
+
+## Tabelas
+
+- **`/tabela` com três subcomandos** (`listar`, `criar`, `editar`); o resto é painel
+  com botões, como o `/manage`. Os botões dependem da tabela: "Campos próprios" só com
+  Personalizado, "Editar subcategoria" só se houver alguma.
+- **Excluir tabela diz quantas obras vão junto.** O banco apaga as obras (e os takes
+  delas) com a tabela; o aviso dá o número antes da confirmação.
+- **Apagar subcategoria não apaga obra:** elas ficam na tabela, sem subcategoria, e o
+  aviso diz isso.
+- **Campos próprios:** o tipo é escolhido na criação e não muda (regra do backend);
+  apagar um campo apaga o valor dele em todas as obras, com confirmação.
+- **Trocar o tipo de uma obra** só aparece em tabela mista. Como no site, a ligação com
+  a busca antiga e os campos próprios saem, porque eram do tipo anterior.
+- **Depois de cada mudança o painel é refeito com o que o backend devolveu**, e não só
+  redesenhado: os botões que fazem sentido podem ter mudado.
+
+## Social
+
+- **`/api/social` inteiro entrou na lista do bot** (2026-11-17). Nada ali apaga conta
+  ou derruba sessão; quem vê o quê (perfil trancado, take de perfil privado) continua
+  decidido pelo backend.
+- **Perfil de outra pessoa pelo nome do MyRank**, com autocompletar pela busca de
+  pessoas. Pela menção do Discord ficou para decidir (ver ROADMAP).
+- **O botão de seguir diz o que o clique faz**: Seguir, Pedir para seguir (privado),
+  Cancelar pedido ou Deixar de seguir. Depois do clique o perfil é buscado de novo.
+- **Feed pedido ao backend página por página** (8 takes por página, mais os cards de
+  "avaliou N obras"); página vazia é o fim. O bot não junta nem reordena nada.
+- **Take abre numa mensagem só para a pessoa**, com reações (a dela fica destacada;
+  clicar de novo tira), comentários e, se o take for dela, editar e apagar.
+- **Comentários em dois níveis, como no site**; comentar, responder, editar e apagar
+  acontecem na própria mensagem, que é redesenhada com a lista nova.
+- **`/take` recebe o texto no próprio comando**, sem janela: o comando já confirma a
+  interação para buscar dados, e depois disso o Discord não deixa abrir janela.
+- **Pedidos para seguir respondem só para a pessoa** (mensagem privada), porque dizem
+  quem quer seguir quem.
 
 ## Comportamento
 
