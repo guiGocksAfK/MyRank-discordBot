@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import discord
 
-from myrank.media import MediaType, template_label
+from myrank.media import CUSTOM_TEMPLATE, MediaType, template_label
 from myrank.models import Badge, Category, ExternalDetails, ExternalResult, Work
 
 ACCENT = discord.Color(0xD4AF37)
@@ -128,20 +128,55 @@ def manual_ready(table: Category, template: str) -> discord.Embed:
     )
 
 
-def _work_fields(embed: discord.Embed, work: Work, *, show_raw_score: bool) -> discord.Embed:
+def _work_fields(
+    embed: discord.Embed, work: Work, *, show_raw_score: bool, table: Category | None = None,
+) -> discord.Embed:
     if show_raw_score:
         embed.add_field(name="Nota", value=f"{work.score:.1f}")
     embed.add_field(name="Nota final", value=f"{work.final_score:.1f}")
     if work.category_name:
-        table = work.category_name
+        name = work.category_name
         if work.subcategory_name:
-            table += f" > {work.subcategory_name}"
-        embed.add_field(name="Tabela", value=table)
+            name += f" > {work.subcategory_name}"
+        embed.add_field(name="Tabela", value=name[:1024])
+    if work.template:
+        embed.add_field(name="Tipo", value=template_label(work.template))
+    if work.creator:
+        embed.add_field(name="Criador / autor", value=work.creator[:1024])
+    if work.release_date:
+        embed.add_field(name="Lancamento", value=_br_date(work.release_date))
     if work.time_minutes:
         embed.add_field(name="Duracao", value=f"{work.time_minutes} min")
+    for key, label in _FICHA_LABELS:
+        value = work.details.get(key)
+        if value not in (None, "", 0):
+            embed.add_field(name=label, value=str(value)[:1024])
+    if table is not None:
+        values = work.details.get("fields")
+        values = values if isinstance(values, dict) else {}
+        for field in table.custom_fields:
+            value = values.get(field.id)
+            if value is not None:
+                embed.add_field(name=field.name[:256], value=_custom_value(value)[:1024])
     if work.image_url:
         embed.set_thumbnail(url=work.image_url)
     return embed
+
+
+def _br_date(iso: str) -> str:
+    """2008-01-20 -> 20/01/2008; qualquer outra coisa sai como veio."""
+    parts = iso[:10].split("-")
+    return "/".join(reversed(parts)) if len(parts) == 3 else iso
+
+
+def _custom_value(value: object) -> str:
+    if value is True:
+        return "Sim"
+    if value is False:
+        return "Nao"
+    if isinstance(value, str) and len(value) == 10 and value[4] == "-":
+        return _br_date(value)
+    return str(value)
 
 
 def work_added(work: Work) -> discord.Embed:
@@ -154,12 +189,76 @@ def work_updated(work: Work) -> discord.Embed:
     return _work_fields(base(f"Atualizado: {work.title}"), work, show_raw_score=True)
 
 
-def work_detail(work: Work) -> discord.Embed:
-    return _work_fields(base(work.title), work, show_raw_score=True)
+def work_refreshed(work: Work) -> discord.Embed:
+    return _work_fields(
+        base(f"Dados atualizados: {work.title}", "Ficha buscada de novo na origem."),
+        work, show_raw_score=True,
+    )
+
+
+def work_detail(work: Work, table: Category | None = None) -> discord.Embed:
+    return _work_fields(base(work.title), work, show_raw_score=True, table=table)
 
 
 def work_removed(title: str) -> discord.Embed:
     return base(f"Removido: {title}")
+
+
+def _types(table: Category) -> str:
+    return ", ".join(template_label(t) for t in table.templates) or "-"
+
+
+def table_list(tables: list[Category]) -> discord.Embed:
+    embed = base("Suas tabelas")
+    if not tables:
+        embed.description = "Voce ainda nao tem nenhuma tabela. Crie com `/tabela criar`."
+        return embed
+    for table in tables[:25]:
+        value = f"Tipos: {_types(table)}"
+        if table.subcategories:
+            value += "\nSubcategorias: " + ", ".join(s.name for s in table.subcategories)
+        embed.add_field(name=table.name[:256], value=value[:1024], inline=False)
+    return embed
+
+
+def table_created(table: Category) -> discord.Embed:
+    embed = base(f"Tabela criada: {table.name}"[:256], f"Tipos: {_types(table)}")
+    embed.set_footer(text="Use /tabela editar para subcategorias e campos proprios.")
+    return embed
+
+
+def table_detail(table: Category, work_count: int) -> discord.Embed:
+    embed = base(table.name[:256])
+    embed.add_field(name="Tipos", value=_types(table)[:1024], inline=False)
+    embed.add_field(name="Obras", value=str(work_count))
+    embed.add_field(
+        name="Subcategorias",
+        value=(", ".join(s.name for s in table.subcategories) or "Nenhuma")[:1024],
+        inline=False,
+    )
+    if CUSTOM_TEMPLATE in table.templates:
+        embed.add_field(name="Campos proprios", value=_fields_text(table), inline=False)
+    return embed
+
+
+def custom_fields(table: Category) -> discord.Embed:
+    embed = base(f"Campos proprios: {table.name}"[:256], _fields_text(table))
+    embed.set_footer(text="Ate 5 campos por tabela.")
+    return embed
+
+
+def _fields_text(table: Category) -> str:
+    labels = {"TEXT": "texto", "NUMBER": "numero", "DATE": "data", "BOOLEAN": "sim/nao"}
+    lines = [f"{f.name} ({labels.get(f.type, f.type)})" for f in table.custom_fields]
+    return ("\n".join(lines) or "Nenhum ainda.")[:1024]
+
+
+def delete_table_warning(table: Category, work_count: int) -> str:
+    obras = "1 obra" if work_count == 1 else f"{work_count} obras"
+    return (
+        f"Excluir a tabela **{table.name}**? As **{obras}** dela tambem sao apagadas, "
+        "com notas e takes. Nao da para desfazer."
+    )
 
 
 def error(message: str) -> discord.Embed:

@@ -14,11 +14,24 @@ from collections.abc import Awaitable, Callable
 import discord
 
 from myrank.api import MyRankClient
-from myrank.media import MediaType, tables_for, template_label
+from myrank.media import (
+    CUSTOM_TEMPLATE,
+    MediaType,
+    by_template,
+    tables_for,
+    template_label,
+)
 from myrank.models import Badge, Category, ExternalDetails, ExternalResult, Work
+from myrank.works import change_template_payload, refresh_payload
 from ui import embeds
 from ui.errors import to_embed
-from ui.modals import EditScoreModal, ManualWorkModal, ScoreModal
+from ui.modals import (
+    CustomFieldsModal,
+    EditScoreModal,
+    EditWorkModal,
+    ManualWorkModal,
+    ScoreModal,
+)
 
 PAGE_SIZE = 10
 
@@ -455,24 +468,180 @@ class ConfirmView(discord.ui.View):
 
 
 class ManageView(discord.ui.View):
-    """Editar a nota ou remover uma obra especifica -- alvo do /manage."""
+    """Painel do /manage: tudo o que o site deixa mudar numa obra.
 
-    def __init__(self, api: MyRankClient, author_id: int, work: Work) -> None:
-        super().__init__(timeout=120)
+    Os botoes dependem da obra: "Subcategoria" so com subcategorias na tabela,
+    "Campos proprios" so em obra Personalizado com campos, "Atualizar dados" so em
+    obra de um tipo que tem busca. Depois de cada edicao o painel se atualiza com a
+    obra que o backend devolveu, para a proxima edicao partir do valor certo.
+    """
+
+    message: discord.Message | None = None
+
+    def __init__(
+        self, api: MyRankClient, author_id: int, work: Work, table: Category | None = None,
+    ) -> None:
+        super().__init__(timeout=600)
         self._api = api
         self._author_id = author_id
         self._work = work
+        self._table = table
+        if table is None or not table.subcategories:
+            self.remove_item(self.move_subcategory)
+        if work.template != CUSTOM_TEMPLATE or table is None or not table.custom_fields:
+            self.remove_item(self.edit_custom_fields)
+        if work.template is None or work.template == CUSTOM_TEMPLATE:
+            self.remove_item(self.refresh)
+        if table is None or len(table.templates) < 2:
+            self.remove_item(self.change_type)
+
+    @property
+    def work(self) -> Work:
+        return self._work
+
+    @property
+    def api(self) -> MyRankClient:
+        return self._api
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return await _check_author(interaction, self._author_id)
 
-    @discord.ui.button(label="Editar nota", style=discord.ButtonStyle.primary)
+    async def on_timeout(self) -> None:
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+        if self.message is not None:
+            await self.message.edit(view=self)
+
+    async def saved(self, work: Work) -> None:
+        """Chamado pelos modais e selects depois que o backend gravou.
+
+        O painel e refeito, e nao so redesenhado: os botoes dependem da obra (trocar
+        o tipo muda se existe "Atualizar dados" e "Campos proprios").
+        """
+        self._work = work
+        if self.message is None:
+            return
+        panel = ManageView(self._api, self._author_id, work, self._table)
+        panel.message = self.message
+        self.stop()
+        await self.message.edit(embed=embeds.work_detail(work, self._table), view=panel)
+
+    @discord.ui.button(label="Editar nota", style=discord.ButtonStyle.primary, row=0)
     async def edit_score(
         self, interaction: discord.Interaction, button: discord.ui.Button[ManageView]
     ) -> None:
-        await interaction.response.send_modal(EditScoreModal(self._api, self._work))
+        await interaction.response.send_modal(
+            EditScoreModal(self._api, self._work, on_saved=self.saved)
+        )
 
-    @discord.ui.button(label="Remover", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Editar dados", style=discord.ButtonStyle.primary, row=0)
+    async def edit_data(
+        self, interaction: discord.Interaction, button: discord.ui.Button[ManageView]
+    ) -> None:
+        await interaction.response.send_modal(
+            EditWorkModal(self._api, self._work, on_saved=self.saved)
+        )
+
+    @discord.ui.button(label="Campos proprios", style=discord.ButtonStyle.primary, row=0)
+    async def edit_custom_fields(
+        self, interaction: discord.Interaction, button: discord.ui.Button[ManageView]
+    ) -> None:
+        assert self._table is not None
+        await interaction.response.send_modal(CustomFieldsModal(
+            self._api, self._work, self._table.custom_fields, on_saved=self.saved
+        ))
+
+    @discord.ui.button(label="Trocar tipo", style=discord.ButtonStyle.secondary, row=1)
+    async def change_type(
+        self, interaction: discord.Interaction, button: discord.ui.Button[ManageView]
+    ) -> None:
+        assert self._table is not None
+        options = [
+            discord.SelectOption(label=template_label(t), value=t)
+            for t in self._table.templates if t != self._work.template
+        ]
+        view = discord.ui.View(timeout=120)
+        view.add_item(ChoiceSelect(options, "Novo tipo...", self._type_picked))
+        await interaction.response.send_message(
+            f"De que tipo e **{self._work.title}**? A ligacao com a busca e os campos "
+            "proprios saem, porque eram do tipo antigo.",
+            view=view, ephemeral=True,
+        )
+
+    async def _type_picked(self, interaction: discord.Interaction, template: str) -> None:
+        await interaction.response.defer()
+        try:
+            work = await self._api.update_work(
+                interaction.user.id, self._work.id, change_template_payload(self._work, template)
+            )
+        except Exception as exc:
+            await interaction.edit_original_response(content=None, embed=to_embed(exc), view=None)
+            return
+        await interaction.edit_original_response(
+            content=None, embed=embeds.work_updated(work), view=None
+        )
+        await self.saved(work)
+
+    @discord.ui.button(label="Subcategoria", style=discord.ButtonStyle.secondary, row=1)
+    async def move_subcategory(
+        self, interaction: discord.Interaction, button: discord.ui.Button[ManageView]
+    ) -> None:
+        assert self._table is not None
+        await interaction.response.send_message(
+            f"Em que subcategoria **{self._work.title}** fica?",
+            view=SubcategoryMoveView(self, self._table), ephemeral=True,
+        )
+
+    @discord.ui.button(label="Atualizar dados", style=discord.ButtonStyle.secondary, row=1)
+    async def refresh(
+        self, interaction: discord.Interaction, button: discord.ui.Button[ManageView]
+    ) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        assert self._work.template is not None
+        media = by_template(self._work.template)
+        external_id = self._work.details.get("externalId")
+        if external_id:
+            await self.apply_refresh(interaction, media, str(external_id))
+            return
+        # Obra antiga, sem id da busca: a pessoa confirma qual e, como no site,
+        # para nao ligar a obra a um remake com o mesmo nome.
+        try:
+            results = await self._api.external_search(
+                interaction.user.id, media.endpoint, self._work.title
+            )
+        except Exception as exc:
+            await interaction.edit_original_response(embed=to_embed(exc))
+            return
+        if not results:
+            await interaction.edit_original_response(embed=embeds.error(
+                "Nao achei essa obra na busca. Confira o titulo em Editar dados."
+            ))
+            return
+        await interaction.edit_original_response(
+            content="Qual destes e a sua obra?", view=RefreshPickView(self, media, results),
+        )
+
+    async def apply_refresh(
+        self, interaction: discord.Interaction, media: MediaType, external_id: str
+    ) -> None:
+        """Busca a ficha de novo e grava. A interacao ja foi confirmada (defer)."""
+        try:
+            fetched = await self._api.external_details(
+                interaction.user.id, media.endpoint, external_id
+            )
+            work = await self._api.update_work(
+                interaction.user.id, self._work.id, refresh_payload(self._work, media, fetched)
+            )
+        except Exception as exc:
+            await interaction.edit_original_response(content=None, embed=to_embed(exc), view=None)
+            return
+        await interaction.edit_original_response(
+            content=None, embed=embeds.work_refreshed(work), view=None
+        )
+        await self.saved(work)
+
+    @discord.ui.button(label="Remover", style=discord.ButtonStyle.danger, row=1)
     async def remove(
         self, interaction: discord.Interaction, button: discord.ui.Button[ManageView]
     ) -> None:
@@ -483,6 +652,7 @@ class ManageView(discord.ui.View):
             view=confirm_view,
         )
         confirm_view.message = await interaction.original_response()
+        self.stop()
 
     async def _confirm_remove(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
@@ -494,3 +664,64 @@ class ManageView(discord.ui.View):
         await interaction.edit_original_response(
             content=None, embed=embeds.work_removed(self._work.title), view=None
         )
+
+
+class SubcategoryMoveView(discord.ui.View):
+    """Troca a subcategoria de uma obra que ja existe. "Sem subcategoria" manda 0,
+    que e como o backend entende "tirar da subcategoria"."""
+
+    def __init__(self, panel: ManageView, table: Category) -> None:
+        super().__init__(timeout=120)
+        self._panel = panel
+        options = [discord.SelectOption(
+            label="Sem subcategoria", value=NO_SUBCATEGORY,
+            default=panel.work.subcategory_id is None,
+        )]
+        options += [
+            discord.SelectOption(
+                label=_truncate(sub.name, 100), value=str(sub.id),
+                default=sub.id == panel.work.subcategory_id,
+            )
+            for sub in table.subcategories[:24]
+        ]
+        self.add_item(ChoiceSelect(options, "Escolha a subcategoria...", self._on_pick))
+
+    async def _on_pick(self, interaction: discord.Interaction, value: str) -> None:
+        await interaction.response.defer()
+        try:
+            work = await self._panel.api.update_work(
+                interaction.user.id, self._panel.work.id, {"subcategoryId": int(value)}
+            )
+        except Exception as exc:
+            await interaction.edit_original_response(content=None, embed=to_embed(exc), view=None)
+            return
+        await interaction.edit_original_response(
+            content=None, embed=embeds.work_updated(work), view=None
+        )
+        await self._panel.saved(work)
+
+
+class RefreshPickView(discord.ui.View):
+    """Atualizar dados de obra sem id da busca: a pessoa escolhe o resultado certo."""
+
+    def __init__(
+        self, panel: ManageView, media: MediaType, results: list[ExternalResult],
+    ) -> None:
+        super().__init__(timeout=120)
+        self._panel = panel
+        self._media = media
+        options = [
+            discord.SelectOption(
+                label=_truncate(result.title or "Sem titulo", 100),
+                description=_truncate(
+                    " | ".join(x for x in (result.year, result.creator) if x) or "-", 100
+                ),
+                value=result.external_id,
+            )
+            for result in results[:25]
+        ]
+        self.add_item(ChoiceSelect(options, "Escolha a obra certa...", self._on_pick))
+
+    async def _on_pick(self, interaction: discord.Interaction, value: str) -> None:
+        await interaction.response.defer()
+        await self._panel.apply_refresh(interaction, self._media, value)
