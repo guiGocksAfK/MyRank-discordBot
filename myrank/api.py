@@ -101,7 +101,7 @@ class MyRankClient:
         self, discord_id: int, endpoint: str, external_id: str
     ) -> ExternalDetails:
         return ExternalDetails.from_api(
-            await self._get(discord_id, f"/external/{endpoint}/{external_id}")
+            await self._get(discord_id, f"/external/{endpoint}/{external_id}"), external_id
         )
 
     # ---------------------------------------------------------------- obras

@@ -122,6 +122,7 @@ async def test_external_search_uses_backend_external_id(make_client: ClientFacto
         "title": "Breaking Bad",
         "posterUrl": "https://example.com/poster.jpg",
         "releaseDate": "2008-01-20",
+        "subtitle": "AMC",
     }]
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -135,15 +136,20 @@ async def test_external_search_uses_backend_external_id(make_client: ClientFacto
     assert results[0].external_id == "1396"
     assert results[0].title == "Breaking Bad"
     assert results[0].year == "2008"
+    assert results[0].creator == "AMC"
 
 
 async def test_external_details_without_id(make_client: ClientFactory) -> None:
     payload = {
         "title": "Breaking Bad", "imageUrl": "https://example.com/poster.jpg",
         "creator": "Vince Gilligan", "releaseDate": "2008-01-20", "timeMinutes": 3000,
+        "details": {"seasons": 5, "status": "Ended"},
     }
     client = await make_client(lambda _: json_response(payload))
     details = await client.external_details(123, "tv", "1396")
     assert details.title == "Breaking Bad"
     assert details.time_minutes == 3000
     assert details.creator == "Vince Gilligan"
+    # A resposta nao traz o id: o client preenche com o que pediu.
+    assert details.external_id == "1396"
+    assert details.details == {"seasons": 5, "status": "Ended"}
