@@ -9,22 +9,16 @@ do bot só vale nas rotas da lista `BOT_ROUTES` (ver "Rotas" em decisoes.md).
 
 ## Estado atual
 
-Pronto e no `main`: `/perfil`, `/ranking`, `/conquistas`, `/add` (filme, série, jogo,
-anime e livro) e `/manage` (editar nota, remover). Ainda não está no ar: falta subir
-na VM e pôr a chave do bot no backend de lá.
+Pronto: `/perfil`, `/ranking`, `/conquistas`, `/add` (as 8 mídias, com tipo, ficha e
+subcategoria, igual ao site), `/add-manual` (obra digitada, inclusive Personalizado) e
+`/manage` (editar nota, remover). Ainda não está no ar:
+falta subir na VM e pôr a chave do bot no backend de lá.
 
 ## Fase 1 — Obras e tabelas completas
 
 Tudo aqui usa rotas que o bot já pode chamar (`/api/works`, `/api/categories`,
 `/api/external`). O backend não muda.
 
-- **`/add` com as 8 mídias do site:** entram mangá, música e álbum.
-- **`/add` salva a obra igual ao site:** guarda o template e a ficha (gêneros,
-  episódios etc.) e deixa escolher a subcategoria. Hoje a obra do bot entra só com
-  título, nota, capa, autor e data.
-- **Obra sem busca:** cadastrar à mão, para o que não existe em nenhuma API.
-- **`/buscar <mídia> <termo>`:** ver a obra (capa, ficha, sinopse) sem cadastrar,
-  com um botão "Adicionar" que continua no fluxo do `/add`.
 - **`/manage` edita tudo o que o site edita:** título, data, tempo, criador,
   subcategoria e campos próprios da tabela, além de "Atualizar dados".
 - **`/tabela`:** criar, renomear e excluir tabelas; criar, renomear e excluir

@@ -18,11 +18,13 @@ progresso de conquista, nem ranking. Toda regra de negócio mora no backend Java
 | `/perfil` | Seu resumo: quantas obras, média das notas e conquistas. |
 | `/ranking [categoria]` | Suas obras na ordem do ranking, com páginas. |
 | `/conquistas` | Conquistas desbloqueadas e o progresso das que faltam. |
-| `/add <mídia> <busca>` | Busca a obra (com capa), confirma os dados, escolhe a tabela e pede a nota. |
+| `/add <mídia> <busca>` | Busca a obra (com capa), confirma os dados, escolhe a tabela e a subcategoria e pede a nota. |
+| `/add-manual <tabela> [tipo]` | Cadastra uma obra digitando os dados, para o que não existe em nenhuma busca. |
 | `/manage <obra>` | Edita a nota ou remove uma obra sua (com confirmação). |
 
-Hoje o `/add` cobre filme, série, jogo, anime e livro. O que ainda falta do site está
-no roadmap.
+O `/add` cobre as 8 mídias do site (filme, série, anime, mangá, jogo, livro, música e
+álbum) e grava a obra como o site grava: com o tipo e a ficha da busca. As tabelas
+oferecidas são as que aceitam aquele tipo. O que ainda falta do site está no roadmap.
 
 ## Arquitetura
 

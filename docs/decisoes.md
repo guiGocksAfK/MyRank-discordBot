@@ -30,6 +30,29 @@ O que já foi decidido e por quê. O que falta fazer fica em [ROADMAP.md](ROADMA
   `/api/users` mistura rotas permitidas e proibidas, a liberação dela tem que ser por
   rota e método, não pelo prefixo.
 
+## Obras
+
+- **A tabela é escolhida pelo tipo, não pelo nome.** Cada tabela tem os tipos que
+  aceita (`templates`); o `/add` só oferece essas. Com uma só, ela é usada direto; com
+  várias, a pessoa escolhe; com nenhuma, o bot manda criar no site. O bot nunca cria
+  tabela sozinho.
+- **A obra é gravada como o site grava:** com o tipo e a ficha da busca, mais
+  `provider` e `externalId`, que o "Atualizar dados" usa depois.
+- **Subcategoria é opcional**, e a pergunta só aparece se a tabela tiver alguma.
+- **Tempo só é perguntado quando falta:** se a busca não trouxe e o tipo usa a nota
+  ponderada pelo tempo, o modal da nota pede as horas (opcional).
+- **Sem `/buscar` separado** (estava no plano e saiu em 2026-11-17). O `/add` já
+  deixa ver capa e ficha sem cadastrar nada, e no site a busca também só existe dentro
+  do "adicionar". Seriam dois comandos fazendo a mesma coisa.
+- **Obra sem busca é o `/add-manual`**, com a tabela no próprio comando. O modal do
+  Discord aceita só 5 campos: título, nota, criador, lançamento e horas (só nos tipos
+  com nota ponderada pelo tempo). Capa e campos próprios ficam para a edição no
+  `/manage`. Tabela mista pergunta o tipo antes.
+- **Lançamento aceita ano ou data** (`2008` ou `20/01/2008`); só o ano vira 1º de
+  janeiro, como o backend já faz com o Google Books.
+- **Editar manda só o que mudou.** O `PUT` do backend é parcial; mandar a obra inteira
+  arriscaria apagar a ficha ou a subcategoria.
+
 ## Comportamento
 
 - **Toda resposta vem do backend na ordem dele.** O bot não reordena ranking, feed nem
