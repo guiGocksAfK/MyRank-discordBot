@@ -41,9 +41,9 @@ class AddCog(commands.Cog):
             return
 
         view = MediaResultView(api, interaction.user.id, media_type, results)
-        await interaction.followup.send(
+        view.message = await interaction.followup.send(
             f"Encontrei {len(results)} resultado(s) para **{busca}**. Qual e o certo?",
-            view=view,
+            embed=view.embed(), view=view, wait=True,
         )
 
 

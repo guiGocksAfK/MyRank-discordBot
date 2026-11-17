@@ -113,10 +113,12 @@ class ExternalResult:
     title: str
     year: str | None = None
     creator: str | None = None
+    poster_url: str | None = None
 
     @classmethod
     def from_api(cls, data: Json) -> ExternalResult:
         return cls(
+            poster_url=_opt_str(data.get("posterUrl")),
             external_id=str(data["externalId"]),
             title=str(data.get("title", "")),
             year=_opt_str(data.get("year") or _year_of(data.get("releaseDate"))),
