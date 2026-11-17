@@ -323,3 +323,49 @@ async def test_client_social_routes(make_client: ClientFactory) -> None:
         ("DELETE", "/api/social/takes/11", "", None),
         ("POST", "/api/social/takes/11/comments", "", {"text": "oi", "parentCommentId": 3}),
     ]
+
+
+async def test_text_modal_rejects_blank_or_short_text() -> None:
+    action = AsyncMock()
+    modal = TextModal(
+        "Editar take", "Take", action, default="x" * 300, min_length=3, max_length=280
+    )
+    assert modal.text.default == "x" * 280
+    modal.text._value = "  ab "
+    i = interaction()
+    await modal.on_submit(i)
+    action.assert_not_awaited()
+    i.response.send_message.assert_awaited_once()
+
+
+async def test_people_timeout_disables_select_and_ignores_http_error() -> None:
+    view = PeopleView(MagicMock(), 123, "Seguindo", users(3), empty="-")
+    view.message = MagicMock()
+    response = MagicMock(status=404, reason="Not Found")
+    view.message.edit = AsyncMock(side_effect=discord.HTTPException(response, "Unknown Message"))
+    await view.on_timeout()
+    assert all(
+        c.disabled for c in view.children if isinstance(c, (discord.ui.Button, discord.ui.Select))
+    )
+    view.message.edit.assert_awaited_once()
+
+
+async def test_comments_pick_back_and_delete_cancel_return_to_comments() -> None:
+    view = CommentsView(MagicMock(), 123, TAKE, ROOTS)
+    i = interaction()
+    await view.reply.callback(i)
+    pick_view = i.response.edit_message.call_args.kwargs["view"]
+    j = interaction()
+    await pick_view.back.callback(j)
+    assert isinstance(j.response.edit_message.call_args.kwargs["view"], CommentsView)
+
+    i2 = interaction()
+    await view.delete.callback(i2)
+    del_pick = i2.response.edit_message.call_args.kwargs["view"].children[0]
+    j2 = interaction()
+    await del_pick._on_pick(j2, "1")
+    confirm = j2.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(confirm, ConfirmView)
+    k = interaction()
+    await confirm.cancel.callback(k)
+    assert isinstance(k.response.edit_message.call_args.kwargs["view"], CommentsView)

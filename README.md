@@ -15,13 +15,19 @@ progresso de conquista, nem ranking. Toda regra de negócio mora no backend Java
 
 | Comando | O que faz |
 |---|---|
-| `/perfil [pessoa]` | Seu resumo (obras, média, conquistas, seguidores), ou o perfil de outra pessoa, com o botão de seguir. |
+| `/perfil [pessoa]` | Seu perfil do MyRank (nome, bio, top, conquistas, seguidores), ou o de outra pessoa, com o botão de seguir. |
 | `/social feed [so_quem_sigo]` | O feed, com páginas; abra um take para reagir, comentar, editar ou apagar. |
 | `/social pessoas <lista>` | Seguindo, seguidores, sugestões ou debatedores, com gosto parecido e obras em comum. |
 | `/social buscar <nome>` | Procura pessoas no MyRank. |
 | `/social pedidos` | Aprova ou recusa pedidos para seguir o seu perfil privado. |
 | `/take <obra> <texto>` | Escreve um take (de 3 a 280 caracteres) sobre uma obra sua. |
-| `/ranking [categoria]` | Suas obras na ordem do ranking, com páginas. |
+| `/notificacoes` | Suas notificações, com páginas e "marcar todas como lidas". |
+| `/insights gerar [tabela]` | Análise do seu gosto feita por IA (todas as obras ou uma tabela). |
+| `/insights ver` | Abre a análise mais recente. |
+| `/insights perguntar <pergunta>` | Pergunta algo à IA sobre a análise (gasta 1 mensagem de IA do dia). |
+| `/config` | Configurações: perfil, privacidade, idioma, mensagens, avisos, nota ponderada e visualização. |
+| `/ranking [tabela] [ordem]` | O ranking geral do site (ou de uma tabela), por nota, nota ponderada ou tempo. |
+| `/criadores [ordem] [tipo]` | Ranking dos diretores, escritores e estúdios das suas obras. |
 | `/conquistas` | Conquistas desbloqueadas e o progresso das que faltam. |
 | `/add <mídia> <busca>` | Busca a obra (com capa), confirma os dados, escolhe a tabela e a subcategoria e pede a nota. |
 | `/add-manual <tabela> [tipo]` | Cadastra uma obra digitando os dados, para o que não existe em nenhuma busca. |
@@ -43,13 +49,22 @@ myrank/                ZERO imports de discord.py aqui dentro
   models.py            dataclasses frozen; finalScore é read-only
   errors.py            NotLinkedError, RateLimitedError, ApiError, ApiUnavailableError
   api.py               MyRankClient: um AsyncClient, headers, status -> exceção
-  media.py             choice -> endpoint externo -> palpite de categoria
+  media.py             choice -> endpoint externo -> payload de obra nova
+  works.py             payloads parciais do /manage (editar, campos, trocar tipo, atualizar)
+  social.py            modelos da área social (feed, perfis, reações, comentários)
+  insights.py          modelos de notificações e IA Insights
+  account.py           modelo Account e diff do perfil para /config
 ui/                    único lugar que importa discord.py
-  embeds.py            tema #d4af37
+  embeds.py            tema #d4af37 (obras, tabelas, ranking, conquistas)
   errors.py            exceção -> embed + decorator @guarded (defer + captura)
-  views.py             paginação por botões, resultados com capa, selects, confirmação
-  modals.py            modais de nota (criar e editar)
-cogs/                  um cog por comando
+  views.py             paginação, resultados com capa, selects, confirmação, /manage
+  modals.py            modais de obra (nota, manual, editar dados, campos próprios)
+  tables.py            telas do /tabela (criar, painel, subcategorias, campos próprios)
+  social_embeds.py     embeds da área social
+  social.py            telas sociais (perfil, pessoas, pedidos, feed, take, comentários)
+  insights.py          telas de /notificacoes e /insights
+  config.py            tela do /config e modal de perfil
+cogs/                  um cog por comando (profile, ranking, conquistas, add, manage, tabela, social, insights, config)
 tests/                 client testado com httpx.MockTransport, views sem gateway
 docs/                  roadmap e decisões
 ```
@@ -138,9 +153,10 @@ O suporte ao bot já está no `master` do
 `users.discord_id`, `BotAuthenticationFilter` (chave + lista de rotas) e rate limit
 por usuário do Discord no `RateLimitFilter`.
 
-Os comandos sociais (`/social`, `/take` e `/perfil <pessoa>`) precisam também de
-`/api/social` na lista de rotas do bot, que está na branch `bot-social` do backend.
-Sem ela, esses comandos respondem que o MyRank não respondeu e o log mostra um 403.
+Os comandos sociais, de notificações, de IA e o `/config` precisam também da branch
+`bot-social` do backend, que acrescenta à lista do bot `/api/social`,
+`/api/notifications`, `/api/insights`, `/api/rankings` e só `GET`/`PUT /api/users/me`. Sem ela, esses
+comandos respondem que o MyRank não respondeu e o log mostra um 403.
 
 ## License
 

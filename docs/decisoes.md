@@ -99,6 +99,37 @@ O que já foi decidido e por quê. O que falta fazer fica em [ROADMAP.md](ROADMA
 - **Pedidos para seguir respondem só para a pessoa** (mensagem privada), porque dizem
   quem quer seguir quem.
 
+## Notificações, IA e conta
+
+- **Notificações, IA e configurações respondem só para a pessoa** (mensagem privada):
+  dizem quem fez o quê, falam do gosto dela ou mostram dados da conta.
+- **`/insights gerar` usa todas as obras ou uma tabela**, com o mínimo de 5 obras do
+  site. Tirar obras uma a uma, como no painel do site, ficou de fora: no Discord
+  seria uma lista de seleção longa para pouco ganho.
+- **"Gerar de novo" só aparece quando o bot sabe que obras entraram** (análise vinda
+  do `/insights gerar`). A análise mais recente (`/insights ver`) não diz isso.
+- **A IA tem 75 segundos de espera**, como no site; o resto da API, 10.
+- **Sem mensagens de IA no dia, "Perguntar" e "Gerar de novo" ficam desligados.** O
+  backend conta e recusa de qualquer forma; o botão desligado só evita o clique à toa.
+- **`/config` salva cada mudança na hora**, como a página do site. Bio e foto vazias
+  apagam. Senha, sair dos aparelhos e excluir a conta continuam só no site.
+- **O `/perfil` próprio usa `/users/me` para achar o id** e mostra o mesmo perfil que
+  os outros veem. Se o backend ainda não liberou `/users/me`, cai no resumo antigo
+  (obras, média e conquistas), em vez de falhar.
+
+## Rankings
+
+- **Ranking geral e de criadores calculados no backend** (`/api/rankings`), e não no
+  bot: no site eles eram montados no front, e copiar a conta para cá quebraria a
+  regra de que o bot não calcula nada. O backend ganhou as duas rotas, com a regra
+  do front; o front ainda calcula do jeito dele (trocar está no ROADMAP do backend).
+- **`/ranking` sem ordem usa a configuração "nota ponderada" da conta**, como o site.
+  Com tabela, desempata pela posição dela; sem tabela, pela ordem manual do
+  "Unificado". A posição mostrada é a da lista, não o campo `position`.
+- **Se o backend ainda não tem `/api/rankings`, o `/ranking` cai na lista simples**
+  (todas as obras pela nota final), em vez de falhar.
+- **Filtros da barra do site** (ano, horas, gênero, status...) ficaram de fora do bot.
+
 ## Comportamento
 
 - **Toda resposta vem do backend na ordem dele.** O bot não reordena ranking, feed nem
