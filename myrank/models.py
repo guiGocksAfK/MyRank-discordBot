@@ -29,6 +29,22 @@ class Subcategory:
 
 
 @dataclass(frozen=True, slots=True)
+class CustomField:
+    """Campo proprio de uma tabela Personalizado. `type`: TEXT, NUMBER, DATE, BOOLEAN."""
+
+    id: str
+    name: str
+    type: str
+
+    @classmethod
+    def from_api(cls, data: Json) -> CustomField:
+        return cls(
+            id=str(data["id"]), name=str(data.get("name", "")),
+            type=str(data.get("type", "TEXT")).upper(),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Category:
     """Uma tabela da pessoa. `templates` diz que tipos de obra ela aceita."""
 
@@ -37,6 +53,7 @@ class Category:
     is_default: bool = False
     templates: tuple[str, ...] = ()
     subcategories: tuple[Subcategory, ...] = ()
+    custom_fields: tuple[CustomField, ...] = ()
 
     @classmethod
     def from_api(cls, data: Json) -> Category:
@@ -47,6 +64,9 @@ class Category:
             templates=tuple(str(t) for t in data.get("templates") or ()),
             subcategories=tuple(
                 Subcategory.from_api(item) for item in data.get("subcategories") or ()
+            ),
+            custom_fields=tuple(
+                CustomField.from_api(item) for item in data.get("customFields") or ()
             ),
         )
 
