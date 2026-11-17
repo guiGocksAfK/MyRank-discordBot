@@ -21,9 +21,9 @@ class ConfigCog(commands.Cog):
     async def config(self, interaction: discord.Interaction) -> None:
         api = self.bot.api  # type: ignore[attr-defined]
         account = await api.me(interaction.user.id)
-        await interaction.followup.send(
-            embed=config_embed(account), view=ConfigView(api, interaction.user.id, account),
-            ephemeral=True,
+        view = ConfigView(api, interaction.user.id, account)
+        view.message = await interaction.followup.send(
+            embed=config_embed(account), view=view, ephemeral=True, wait=True,
         )
 
 

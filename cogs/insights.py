@@ -70,9 +70,9 @@ class InsightsCog(commands.GroupCog, group_name="insights",
             return
         work_ids = [work.id for work in works[:500]]
         insight = await api.generate_insight(interaction.user.id, work_ids)
-        await interaction.followup.send(
-            embed=insight_embed(insight),
-            view=InsightView(api, interaction.user.id, insight, work_ids), ephemeral=True,
+        view = InsightView(api, interaction.user.id, insight, work_ids)
+        view.message = await interaction.followup.send(
+            embed=insight_embed(insight), view=view, ephemeral=True, wait=True,
         )
 
     @gerar.autocomplete("tabela")
@@ -100,9 +100,9 @@ class InsightsCog(commands.GroupCog, group_name="insights",
         if insight is None:
             await interaction.followup.send(embed=embeds.error(NO_INSIGHT), ephemeral=True)
             return
-        await interaction.followup.send(
-            embed=insight_embed(insight), view=InsightView(api, interaction.user.id, insight),
-            ephemeral=True,
+        view = InsightView(api, interaction.user.id, insight)
+        view.message = await interaction.followup.send(
+            embed=insight_embed(insight), view=view, ephemeral=True, wait=True,
         )
 
     @app_commands.command(  # type: ignore[arg-type]
@@ -122,10 +122,9 @@ class InsightsCog(commands.GroupCog, group_name="insights",
             await interaction.followup.send(embed=embeds.error(NO_INSIGHT), ephemeral=True)
             return
         insight = await api.ask_insight(interaction.user.id, latest.id, pergunta)
-        await interaction.followup.send(
-            embed=chat_embed(insight),
-            view=InsightView(api, interaction.user.id, insight, chat=True),
-            ephemeral=True,
+        view = InsightView(api, interaction.user.id, insight, chat=True)
+        view.message = await interaction.followup.send(
+            embed=chat_embed(insight), view=view, ephemeral=True, wait=True,
         )
 
 

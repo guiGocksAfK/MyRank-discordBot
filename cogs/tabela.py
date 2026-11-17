@@ -45,8 +45,8 @@ class TabelaCog(commands.GroupCog, group_name="tabela", group_description="Suas 
             )
             return
         view = CreateTableView(self.bot.api, interaction.user.id, nome)  # type: ignore[attr-defined]
-        await interaction.followup.send(
-            f"Tabela **{nome}**: que tipos de obra entram nela?", view=view
+        view.message = await interaction.followup.send(
+            f"Tabela **{nome}**: que tipos de obra entram nela?", view=view, wait=True
         )
 
     @app_commands.command(  # type: ignore[arg-type]

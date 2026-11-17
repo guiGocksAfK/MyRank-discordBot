@@ -23,7 +23,7 @@ from myrank.account import (
 from myrank.api import MyRankClient
 from ui.embeds import base
 from ui.errors import to_embed
-from ui.views import _check_author
+from ui.views import _check_author, _disable_on_timeout
 
 PROVIDERS = {"LOCAL": "Email e senha", "GOOGLE": "Google", "DISCORD": "Discord"}
 
@@ -67,6 +67,8 @@ def _options(choices: tuple[tuple[str, str], ...], current: str) -> list[discord
 
 
 class ConfigView(discord.ui.View):
+    message: discord.Message | None = None
+
     def __init__(self, api: MyRankClient, author_id: int, account: Account) -> None:
         super().__init__(timeout=600)
         self._api = api
@@ -101,6 +103,9 @@ class ConfigView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return await _check_author(interaction, self._author_id)
 
+    async def on_timeout(self) -> None:
+        await _disable_on_timeout(self, self.message)
+
     async def save(self, interaction: discord.Interaction, changes: dict[str, Any]) -> None:
         """Salva e redesenha esta mensagem com a conta que o backend devolveu."""
         await interaction.response.defer()
@@ -112,9 +117,9 @@ class ConfigView(discord.ui.View):
             await interaction.followup.send(embed=to_embed(exc), ephemeral=True)
             return
         self.stop()
-        await interaction.edit_original_response(
-            embed=config_embed(account), view=ConfigView(self._api, self._author_id, account)
-        )
+        new_view = ConfigView(self._api, self._author_id, account)
+        new_view.message = self.message
+        await interaction.edit_original_response(embed=config_embed(account), view=new_view)
 
     @discord.ui.button(label="Editar perfil", style=discord.ButtonStyle.primary, row=0)
     async def edit_profile(

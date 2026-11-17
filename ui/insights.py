@@ -184,6 +184,8 @@ class InsightView(discord.ui.View):
     """Botoes da analise. "Gerar de novo" so aparece quando o bot sabe que obras foram
     usadas (veio do /insights gerar); a analise mais recente nao diz isso."""
 
+    message: discord.Message | None = None
+
     def __init__(
         self, api: MyRankClient, author_id: int, insight: Insight,
         work_ids: list[int] | None = None, *, chat: bool = False,
@@ -208,9 +210,13 @@ class InsightView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return await _check_author(interaction, self._author_id)
 
+    async def on_timeout(self) -> None:
+        await _disable_on_timeout(self, self.message)
+
     def _redraw(self, insight: Insight, *, chat: bool) -> tuple[discord.Embed, InsightView]:
         self.stop()
         view = InsightView(self._api, self._author_id, insight, self._work_ids, chat=chat)
+        view.message = self.message
         return (chat_embed(insight) if chat else insight_embed(insight)), view
 
     @discord.ui.button(label="Perguntar", style=discord.ButtonStyle.success)
