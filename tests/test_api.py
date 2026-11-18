@@ -169,3 +169,10 @@ async def test_503_json_preserves_friendly_message_and_non_json_uses_generic(
     with pytest.raises(ApiUnavailableError) as exc_html:
         await client_proxy.get_categories(1)
     assert str(exc_html.value) == GENERIC_SERVER_MESSAGE
+
+
+def test_not_linked_points_to_connect_discord() -> None:
+    from ui import embeds
+
+    text = embeds.not_linked().description or ""
+    assert "Conectar Discord" in text and "Configuracoes" in text

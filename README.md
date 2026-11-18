@@ -95,9 +95,9 @@ X-Bot-Key:    <MYRANK_BOT_API_KEY>
 X-Discord-Id: <interaction.user.id>
 ```
 
-**Vincular a conta:** entrar uma vez no site com "Entrar com Discord". Se o email do
-Discord for o mesmo de uma conta que já existe, o login cai nessa conta e grava o
-Discord nela. Não existe comando de vinculação.
+**Vincular a conta:** no site, em Configurações, o botão "Conectar Discord" liga o
+Discord à conta que está logada, seja ela de email, Google ou Discord. Um Discord só
+fica em uma conta. Não existe comando de vinculação no bot.
 
 **401:** quando a mensagem do backend fala em vínculo, o bot avisa a pessoa para entrar
 no site com o Discord. Qualquer outro 401 (chave errada, header faltando) é problema

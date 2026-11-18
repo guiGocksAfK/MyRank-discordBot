@@ -306,13 +306,15 @@ def error(message: str) -> discord.Embed:
 
 
 def not_linked() -> discord.Embed:
-    """Unico onboarding do bot: nao existe comando de vinculacao."""
+    """Unico onboarding do bot: nao existe comando de vinculacao. O vinculo e feito no
+    site, pelo botao "Conectar Discord" das Configuracoes (vale para qualquer conta,
+    criada com email, Google ou Discord)."""
     return discord.Embed(
         title="Conta nao vinculada",
         description=(
             f"Sua conta do Discord ainda nao esta ligada ao MyRank.\n\n"
-            f"Entre uma vez em {SITE_URL} usando **Login com Discord** "
-            f"e depois volte aqui -- e so isso, uma vez so."
+            f"Entre em {SITE_URL}, abra **Configuracoes** e clique em "
+            f"**Conectar Discord**. Depois e so voltar aqui -- e uma vez so."
         ),
         color=ACCENT,
     )
