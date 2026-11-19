@@ -5,8 +5,8 @@ import pytest
 
 from myrank.errors import ApiUnavailableError
 from myrank.media import TV
-from myrank.models import Category, ExternalDetails, ExternalResult
-from ui.views import CategoryPickView, MediaPreviewView, MediaResultView
+from myrank.models import Category, ExternalDetails, ExternalResult, Subcategory
+from ui.views import MediaPreviewView, MediaResultView, SubcategoryPickView, TablePickView
 
 
 def interaction() -> Any:
@@ -53,7 +53,9 @@ async def test_details_acknowledged_before_http_and_never_save(failed: bool) -> 
 
     api = MagicMock()
     api.external_details = AsyncMock(side_effect=fetch)
-    api.get_categories = AsyncMock(return_value=[Category(1, "Series")])
+    api.get_categories = AsyncMock(return_value=[
+        Category(1, "Series", templates=("tv",)), Category(2, "Jogos", templates=("game",)),
+    ])
     view = MediaResultView(api, 123, TV, [ExternalResult("1396", "Breaking Bad")])
     await view.show_details.callback(i)
     api.external_details.assert_awaited_once_with(123, "tv", "1396")
@@ -64,27 +66,54 @@ async def test_details_acknowledged_before_http_and_never_save(failed: bool) -> 
         assert response["view"] is None
     else:
         assert isinstance(response["view"], MediaPreviewView)
+        assert [t.id for t in response["view"]._tables] == [1]
         assert response["embed"].image.url == details.image_url
         assert any(f.value == "Vince Gilligan" for f in response["embed"].fields)
 
 
-@pytest.mark.parametrize("categories", [[Category(1, "Series")], [Category(2, "Favoritos")], []])
-async def test_confirm_with_matching_custom_or_missing_category(
-    categories: list[Category],
+SERIES = Category(1, "Series", templates=("tv",))
+MISTA = Category(2, "Series e animes", templates=("tv", "anime"),
+                 subcategories=(Subcategory(5, "Comedia"),))
+
+
+@pytest.mark.parametrize(
+    ("tables", "expected"),
+    [([SERIES], "modal"), ([MISTA], SubcategoryPickView),
+     ([SERIES, MISTA], TablePickView), ([], None)],
+)
+async def test_confirm_goes_to_the_next_real_choice(
+    tables: list[Category], expected: object,
 ) -> None:
     api = MagicMock()
-    view = MediaPreviewView(api, 123, TV, ExternalDetails("", "Teste", 120), categories)
+    view = MediaPreviewView(api, 123, TV, ExternalDetails("1", "Teste", 120), tables)
     i = interaction()
     await view.confirm.callback(i)
-    if categories and categories[0].name == "Series":
+    if expected == "modal":
         i.response.send_modal.assert_awaited_once()
+        assert i.response.send_modal.call_args.args[0]._category_id == 1
     else:
         response = i.response.edit_message.call_args.kwargs
-        if categories:
-            assert isinstance(response["view"], CategoryPickView)
-        else:
+        if expected is None:
             assert response["view"] is None
+            assert "Série" in response["embed"].description
+        else:
+            assert isinstance(response["view"], expected)  # type: ignore[arg-type]
     api.create_work.assert_not_called()
+
+
+@pytest.mark.parametrize(("value", "subcategory_id"), [("0", None), ("5", 5)])
+async def test_subcategory_pick_opens_score_modal(
+    value: str, subcategory_id: int | None,
+) -> None:
+    preview = MediaPreviewView(MagicMock(), 123, TV, ExternalDetails("1", "Teste", 120), [MISTA])
+    i = interaction()
+    await preview.confirm.callback(i)
+    pick = i.response.edit_message.call_args.kwargs["view"]
+    assert [o.label for o in pick.children[0].options] == ["Sem subcategoria", "Comedia"]
+    j = interaction()
+    await pick._on_pick(j, value)
+    modal = j.response.send_modal.call_args.args[0]
+    assert (modal._category_id, modal._subcategory_id) == (2, subcategory_id)
 
 
 async def test_preview_author_and_cancel() -> None:

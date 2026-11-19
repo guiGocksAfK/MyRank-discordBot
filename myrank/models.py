@@ -11,17 +11,49 @@ a menos, nao contra nome errado (isso o `KeyError`/teste pega, de proposito).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 Json = dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
+class Subcategory:
+    id: int
+    name: str
+
+    @classmethod
+    def from_api(cls, data: Json) -> Subcategory:
+        return cls(id=int(data["id"]), name=str(data.get("name", "")))
+
+
+@dataclass(frozen=True, slots=True)
+class CustomField:
+    """Campo proprio de uma tabela Personalizado. `type`: TEXT, NUMBER, DATE, BOOLEAN."""
+
+    id: str
+    name: str
+    type: str
+
+    @classmethod
+    def from_api(cls, data: Json) -> CustomField:
+        return cls(
+            id=str(data["id"]), name=str(data.get("name", "")),
+            type=str(data.get("type", "TEXT")).upper(),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Category:
+    """Uma tabela da pessoa. `templates` diz que tipos de obra ela aceita."""
+
     id: int
     name: str
     is_default: bool = False
+    templates: tuple[str, ...] = ()
+    subcategories: tuple[Subcategory, ...] = ()
+    custom_fields: tuple[CustomField, ...] = ()
 
     @classmethod
     def from_api(cls, data: Json) -> Category:
@@ -29,6 +61,13 @@ class Category:
             id=int(data["id"]),
             name=str(data.get("name", "")),
             is_default=bool(data.get("isDefault", data.get("default", False))),
+            templates=tuple(str(t) for t in data.get("templates") or ()),
+            subcategories=tuple(
+                Subcategory.from_api(item) for item in data.get("subcategories") or ()
+            ),
+            custom_fields=tuple(
+                CustomField.from_api(item) for item in data.get("customFields") or ()
+            ),
         )
 
 
@@ -48,10 +87,18 @@ class Work:
     # quando filtrado por categoria -- em /works/unified (todas juntas) ela repete
     # entre categorias diferentes, entao la a numeracao e por ordem de lista mesmo.
     position: int | None = None
+    template: str | None = None
+    subcategory_id: int | None = None
+    subcategory_name: str | None = None
+    details: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_api(cls, data: Json) -> Work:
         return cls(
+            template=_opt_str(data.get("template")),
+            subcategory_id=_opt_int(data.get("subcategoryId")),
+            subcategory_name=_opt_str(data.get("subcategoryName")),
+            details=_as_dict(data.get("details")),
             id=int(data["id"]),
             title=str(data.get("title", "")),
             score=float(data.get("score") or 0.0),
@@ -122,14 +169,20 @@ class ExternalResult:
             external_id=str(data["externalId"]),
             title=str(data.get("title", "")),
             year=_opt_str(data.get("year") or _year_of(data.get("releaseDate"))),
-            creator=_opt_str(data.get("creator")),
+            # O backend manda a linha de apoio (artista, autor...) em `subtitle`.
+            creator=_opt_str(data.get("subtitle") or data.get("creator")),
         )
 
 
 @dataclass(frozen=True, slots=True)
 class ExternalDetails:
     """Resposta de `GET /external/{tipo}/{id}`: ja vem com `timeMinutes` calculado
-    pelo backend. O bot nao estima duracao."""
+    pelo backend. O bot nao estima duracao.
+
+    A resposta nao traz o id; quem preenche `external_id` e o client, com o id que
+    ele mesmo pediu. `details` e a ficha do template (temporadas, episodios, generos
+    etc.), pronta para gravar na obra.
+    """
 
     external_id: str
     title: str
@@ -137,16 +190,18 @@ class ExternalDetails:
     image_url: str | None = None
     creator: str | None = None
     release_date: str | None = None
+    details: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_api(cls, data: Json) -> ExternalDetails:
+    def from_api(cls, data: Json, external_id: str = "") -> ExternalDetails:
         return cls(
-            external_id=str(data.get("id", "")),
+            external_id=external_id,
             title=str(data.get("title", "")),
             time_minutes=int(data.get("timeMinutes") or 0),
             image_url=_opt_str(data.get("imageUrl")),
             creator=_opt_str(data.get("creator")),
             release_date=_opt_str(data.get("releaseDate")),
+            details=_as_dict(data.get("details")),
         )
 
 
@@ -155,6 +210,10 @@ def _opt_str(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _opt_int(value: Any) -> int | None:

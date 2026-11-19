@@ -1,4 +1,5 @@
-"""/manage -- edita a nota ou remove uma obra ja avaliada."""
+"""/manage -- tudo o que o site deixa mudar numa obra: nota, dados, subcategoria,
+campos proprios, "Atualizar dados" e remover."""
 
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ class ManageCog(commands.Cog):
         self.bot = bot
 
     @app_commands.command(  # type: ignore[arg-type]  # mypy nao resolve Concatenate com self de Cog
-        name="manage", description="Edita a nota ou remove uma obra sua."
+        name="manage", description="Edita ou remove uma obra sua."
     )
     @app_commands.describe(obra="Titulo da obra (autocompletar).")
     @guarded()
@@ -34,8 +35,13 @@ class ManageCog(commands.Cog):
             )
             return
 
-        view = ManageView(api, interaction.user.id, work)
-        await interaction.followup.send(embed=embeds.work_detail(work), view=view)
+        # A tabela diz que botoes fazem sentido (subcategorias, campos proprios).
+        categories = await api.get_categories(interaction.user.id)
+        table = next((c for c in categories if c.id == work.category_id), None)
+        view = ManageView(api, interaction.user.id, work, table)
+        view.message = await interaction.followup.send(
+            embed=embeds.work_detail(work, table), view=view, wait=True
+        )
 
     @manage.autocomplete("obra")
     async def manage_obra_autocomplete(

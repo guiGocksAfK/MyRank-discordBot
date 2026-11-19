@@ -19,6 +19,7 @@ from typing import Any
 
 import httpx
 
+from myrank.account import Account
 from myrank.config import Settings
 from myrank.errors import (
     ApiError,
@@ -26,6 +27,7 @@ from myrank.errors import (
     NotLinkedError,
     RateLimitedError,
 )
+from myrank.insights import Insight, Notification
 from myrank.models import (
     Badge,
     Category,
@@ -33,8 +35,22 @@ from myrank.models import (
     ExternalResult,
     Work,
 )
+from myrank.rankings import CreatorRank
+from myrank.social import (
+    FeedItem,
+    Reactions,
+    SocialProfile,
+    SocialSummary,
+    SocialUser,
+    TakeComment,
+)
 
 log = logging.getLogger(__name__)
+
+# A IA demora mais que o resto da API; o site espera ate 75 s.
+AI_TIMEOUT_SECONDS = 75.0
+
+PEOPLE_LISTS = ("following", "followers", "suggestions", "debaters", "follow-requests")
 
 Json = dict[str, Any]
 
@@ -87,6 +103,61 @@ class MyRankClient:
         payload = await self._get(discord_id, "/categories")
         return [Category.from_api(item) for item in _as_list(payload)]
 
+    async def create_category(
+        self, discord_id: int, name: str, templates: list[str]
+    ) -> Category:
+        return Category.from_api(await self._request(
+            discord_id, "POST", "/categories", json={"name": name, "templates": templates}
+        ))
+
+    async def update_category(
+        self, discord_id: int, category_id: int, *,
+        name: str | None = None, templates: list[str] | None = None,
+    ) -> Category:
+        """Campo None = manter (o PUT do backend e parcial)."""
+        body: Json = {}
+        if name is not None:
+            body["name"] = name
+        if templates is not None:
+            body["templates"] = templates
+        return Category.from_api(
+            await self._request(discord_id, "PUT", f"/categories/{category_id}", json=body)
+        )
+
+    async def delete_category(self, discord_id: int, category_id: int) -> None:
+        """Apaga a tabela E todas as obras dela (cascade no banco)."""
+        await self._request(discord_id, "DELETE", f"/categories/{category_id}")
+
+    async def set_custom_fields(
+        self, discord_id: int, category_id: int, fields: list[Json]
+    ) -> Category:
+        """Recebe a lista COMPLETA: campo com `id` e mantido/renomeado, sem `id` e
+        criado, e o que ficar de fora e removido (com os valores em todas as obras)."""
+        return Category.from_api(await self._request(
+            discord_id, "PUT", f"/categories/{category_id}/custom-fields", json=fields
+        ))
+
+    async def create_subcategory(self, discord_id: int, category_id: int, name: str) -> None:
+        await self._request(
+            discord_id, "POST", f"/categories/{category_id}/subcategories", json={"name": name}
+        )
+
+    async def rename_subcategory(
+        self, discord_id: int, category_id: int, subcategory_id: int, name: str
+    ) -> None:
+        await self._request(
+            discord_id, "PUT", f"/categories/{category_id}/subcategories/{subcategory_id}",
+            json={"name": name},
+        )
+
+    async def delete_subcategory(
+        self, discord_id: int, category_id: int, subcategory_id: int
+    ) -> None:
+        """As obras ficam na tabela, so saem da subcategoria."""
+        await self._request(
+            discord_id, "DELETE", f"/categories/{category_id}/subcategories/{subcategory_id}"
+        )
+
     # ---------------------------------------------------------------- busca externa
 
     async def external_search(
@@ -101,7 +172,7 @@ class MyRankClient:
         self, discord_id: int, endpoint: str, external_id: str
     ) -> ExternalDetails:
         return ExternalDetails.from_api(
-            await self._get(discord_id, f"/external/{endpoint}/{external_id}")
+            await self._get(discord_id, f"/external/{endpoint}/{external_id}"), external_id
         )
 
     # ---------------------------------------------------------------- obras
@@ -125,11 +196,163 @@ class MyRankClient:
         path = "/works/unified" if category_id is None else f"/works/category/{category_id}"
         return [Work.from_api(item) for item in _as_list(await self._get(discord_id, path))]
 
+    # ---------------------------------------------------------------- rankings
+
+    async def unified_ranking(
+        self, discord_id: int, sort: str | None = None, table_id: int | None = None
+    ) -> list[Work]:
+        """Ranking geral do site: tabelas do agrupamento "Unificado", ordem manual nos
+        empates; com `table_id`, so aquela tabela. `sort` None = a configuracao "nota
+        ponderada" da conta."""
+        params: dict[str, Any] = {}
+        if sort:
+            params["sort"] = sort
+        if table_id is not None:
+            params["table"] = table_id
+        payload = await self._get(discord_id, "/rankings/unified", params=params)
+        return [Work.from_api(item) for item in _as_list(payload)]
+
+    async def creator_ranking(
+        self, discord_id: int, order: str = "avg", creator_type: str | None = None
+    ) -> list[CreatorRank]:
+        params = {"order": order}
+        if creator_type:
+            params["type"] = creator_type
+        payload = await self._get(discord_id, "/rankings/creators", params=params)
+        return [CreatorRank.from_api(item) for item in _as_list(payload)]
+
     # ---------------------------------------------------------------- conquistas
 
     async def get_badges(self, discord_id: int) -> list[Badge]:
         payload = await self._get(discord_id, "/badges")
         return [Badge.from_api(item) for item in _as_list(payload)]
+
+    # ---------------------------------------------------------------- social
+
+    async def social_summary(self, discord_id: int) -> SocialSummary:
+        return SocialSummary.from_api(await self._get(discord_id, "/social/summary"))
+
+    async def feed(
+        self, discord_id: int, page: int, size: int, *, following_only: bool = False
+    ) -> list[FeedItem]:
+        params = {"page": page, "size": size, "scope": "following" if following_only else "all"}
+        payload = await self._get(discord_id, "/social/feed", params=params)
+        return [FeedItem.from_api(item) for item in _as_list(payload)]
+
+    async def people(self, discord_id: int, kind: str) -> list[SocialUser]:
+        """`kind`: following | followers | suggestions | debaters | follow-requests."""
+        if kind not in PEOPLE_LISTS:
+            raise ValueError(f"Lista desconhecida: {kind!r}")
+        payload = await self._get(discord_id, f"/social/{kind}")
+        return [SocialUser.from_api(item) for item in _as_list(payload)]
+
+    async def search_users(self, discord_id: int, query: str) -> list[SocialUser]:
+        payload = await self._get(discord_id, "/social/users", params={"q": query})
+        return [SocialUser.from_api(item) for item in _as_list(payload)]
+
+    async def profile(self, discord_id: int, user_id: int) -> SocialProfile:
+        return SocialProfile.from_api(await self._get(discord_id, f"/social/users/{user_id}"))
+
+    async def toggle_follow(self, discord_id: int, user_id: int) -> SocialUser:
+        """Alterna: segue, deixa de seguir, pede (perfil privado) ou cancela o pedido."""
+        return SocialUser.from_api(
+            await self._request(discord_id, "POST", f"/social/follow/{user_id}")
+        )
+
+    async def answer_follow_request(
+        self, discord_id: int, requester_id: int, *, approve: bool
+    ) -> None:
+        action = "approve" if approve else "reject"
+        await self._request(
+            discord_id, "POST", f"/social/follow-requests/{requester_id}/{action}"
+        )
+
+    async def react(self, discord_id: int, event_id: int, kind: str) -> Reactions:
+        """Mandar a mesma reacao de novo tira; outra troca."""
+        return Reactions.from_api(await self._request(
+            discord_id, "POST", f"/social/feed/{event_id}/react", json={"kind": kind}
+        ))
+
+    async def post_take(self, discord_id: int, work_id: int, text: str) -> FeedItem:
+        return FeedItem.from_api(await self._request(
+            discord_id, "POST", "/social/takes", json={"workId": work_id, "text": text}
+        ))
+
+    async def edit_take(self, discord_id: int, take_id: int, text: str) -> FeedItem:
+        return FeedItem.from_api(await self._request(
+            discord_id, "PATCH", f"/social/takes/{take_id}", json={"text": text}
+        ))
+
+    async def delete_take(self, discord_id: int, take_id: int) -> None:
+        await self._request(discord_id, "DELETE", f"/social/takes/{take_id}")
+
+    async def comments(self, discord_id: int, take_id: int) -> list[TakeComment]:
+        payload = await self._get(discord_id, f"/social/takes/{take_id}/comments")
+        return [TakeComment.from_api(item) for item in _as_list(payload)]
+
+    async def add_comment(
+        self, discord_id: int, take_id: int, text: str, parent_id: int | None = None
+    ) -> TakeComment:
+        return TakeComment.from_api(await self._request(
+            discord_id, "POST", f"/social/takes/{take_id}/comments",
+            json={"text": text, "parentCommentId": parent_id},
+        ))
+
+    async def edit_comment(self, discord_id: int, comment_id: int, text: str) -> TakeComment:
+        return TakeComment.from_api(await self._request(
+            discord_id, "PATCH", f"/social/comments/{comment_id}", json={"text": text}
+        ))
+
+    async def delete_comment(self, discord_id: int, comment_id: int) -> None:
+        await self._request(discord_id, "DELETE", f"/social/comments/{comment_id}")
+
+    # ---------------------------------------------------------------- conta
+
+    async def me(self, discord_id: int) -> Account:
+        return Account.from_api(await self._get(discord_id, "/users/me"))
+
+    async def update_me(self, discord_id: int, changes: Json) -> Account:
+        """PUT parcial: campo ausente nao muda."""
+        return Account.from_api(await self._request(discord_id, "PUT", "/users/me", json=changes))
+
+    # ---------------------------------------------------------------- notificacoes
+
+    async def notifications(self, discord_id: int, page: int, size: int) -> list[Notification]:
+        payload = await self._get(
+            discord_id, "/notifications", params={"page": page, "size": size}
+        )
+        return [Notification.from_api(item) for item in _as_list(payload)]
+
+    async def unread_notifications(self, discord_id: int) -> int:
+        payload = await self._get(discord_id, "/notifications/unread-count")
+        return int(payload.get("count") or 0) if isinstance(payload, dict) else 0
+
+    async def read_all_notifications(self, discord_id: int) -> None:
+        await self._request(discord_id, "POST", "/notifications/read-all")
+
+    # ---------------------------------------------------------------- IA Insights
+
+    async def latest_insight(self, discord_id: int) -> Insight | None:
+        """None quando a pessoa ainda nao gerou nenhuma analise (204 do backend)."""
+        payload = await self._get(discord_id, "/insights/latest", timeout=AI_TIMEOUT_SECONDS)
+        return Insight.from_api(payload) if isinstance(payload, dict) and payload else None
+
+    async def generate_insight(
+        self, discord_id: int, work_ids: list[int], *, refresh: bool = False
+    ) -> Insight:
+        """Reaproveita a analise da mesma selecao (cache do backend) se `refresh` for
+        False. Gerar de verdade gasta 1 das mensagens de IA do dia."""
+        return Insight.from_api(await self._request(
+            discord_id, "POST", "/insights/generate",
+            json={"workIds": work_ids, "refresh": refresh}, timeout=AI_TIMEOUT_SECONDS,
+        ))
+
+    async def ask_insight(self, discord_id: int, insight_id: int, question: str) -> Insight:
+        """Pergunta de follow-up; gasta 1 das mensagens de IA do dia."""
+        return Insight.from_api(await self._request(
+            discord_id, "POST", f"/insights/{insight_id}/chat",
+            json={"question": question}, timeout=AI_TIMEOUT_SECONDS,
+        ))
 
     # ---------------------------------------------------------------- transporte
 
@@ -187,6 +410,12 @@ class MyRankClient:
         if status == 429:
             raise RateLimitedError(_retry_after(response))
 
+        if status in (502, 503):
+            log.warning(
+                "Erro %s do backend em %s %s: %s", status, method, path, response.text[:500]
+            )
+            raise ApiUnavailableError(_error_message(response, default=GENERIC_SERVER_MESSAGE))
+
         if status >= 500:
             # Detalhe do servidor fica no log; o usuario recebe texto generico.
             log.error("Erro %s do backend em %s %s: %s", status, method, path, response.text[:500])
@@ -216,18 +445,20 @@ def _as_list(payload: Any) -> list[Json]:
     return []
 
 
-def _error_message(response: httpx.Response) -> str:
+def _error_message(
+    response: httpx.Response, default: str = "Nao foi possivel completar a operacao."
+) -> str:
     """Mensagem do GlobalExceptionHandler do backend, quando houver."""
     try:
         body = response.json()
     except ValueError:
-        return "Nao foi possivel completar a operacao."
+        return default
     if isinstance(body, dict):
         for key in ("message", "error", "detail"):
             value = body.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
-    return "Nao foi possivel completar a operacao."
+    return default
 
 
 def _retry_after(response: httpx.Response) -> float | None:

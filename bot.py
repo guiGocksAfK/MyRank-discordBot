@@ -23,6 +23,10 @@ COGS: tuple[str, ...] = (
     "cogs.conquistas",
     "cogs.add",
     "cogs.manage",
+    "cogs.tabela",
+    "cogs.social",
+    "cogs.insights",
+    "cogs.config",
 )
 
 
